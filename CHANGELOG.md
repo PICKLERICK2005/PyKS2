@@ -12,13 +12,13 @@ confirmed working, confirmed read-only, or confirmed unsupported, with the
 remaining gaps noted in the docs.
 
 ### The dissection
-- Broad map of the `/v1/*` API: five read groups
+- Complete map of the `/v1/*` API: five read groups
   (`constants`/`params`/`variables`/`status`/`props`) × four subsystems
   (`camera`/`lens`/`liveview`/`device`), plus capture, focus, photo, live view,
   and the `/v1/changes` WebSocket.
 - Two protocol laws documented: `errCode` lives in the body (not the HTTP
   status), and datetime/numeric formats vary by endpoint.
-- Mode-dial behaviour is characterised (P/Sv/Tv/Av/TAv/M/**Bulb**/U1/U2/auto/scene/
+- Full mode-dial characterisation (P/Sv/Tv/Av/TAv/M/**Bulb**/U1/U2/auto/scene/
   HDR/movie), with a per-mode value-writability matrix driven by list emptiness.
 - Hardware interlocks mapped and explained: AF/MF lever, mode dial, movie mode
   disabling WiFi, the SD-door disconnect, device/lens read-only params, and the
