@@ -122,7 +122,7 @@ are the shipping surfaces.*
 
 The heart of this project is the write-up. Highlights:
 
-- **The full API is 40 endpoints**, organised as five read *groups*
+- **The full API is 38 endpoints**, organised as five read *groups*
   (`constants`/`params`/`variables`/`status`/`props`) × four *subsystems*
   (`camera`/`lens`/`liveview`/`device`), plus capture/focus/photo/liveview
   actions and a WebSocket.
