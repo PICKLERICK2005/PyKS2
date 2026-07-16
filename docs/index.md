@@ -3,14 +3,14 @@ title: Home
 nav_order: 1
 ---
 
-# pyks2: the open source Pentax K-S2 WiFi API
+# PyKS2: the open source Pentax K-S2 WiFi API
 
-The Pentax K-S2 has an undocumented WiFi remote-control API. This project maps
-its **entire surface** against a physical camera and ships a clean Python
+The Pentax K-S2 has an undocumented WiFi remote-control API like many of its K-family relatives.
+This project maps a broad part of the surface against a physical camera and ships a clean Python
 client and CLI built on the findings.
 
-- **[Protocol dissection](PROTOCOL.md)** is every endpoint, every quirk, with
-  captured evidence.
+- **[Protocol dissection](PROTOCOL.md)** is the endpoints and quirks I mapped,
+  with captured evidence.
 - **[Methodology](METHODOLOGY.md)** is how it was probed, including the false
   trails and the PENTAX Image Sync app traffic capture that cracked the gallery grid view.
 
