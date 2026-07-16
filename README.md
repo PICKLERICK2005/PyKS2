@@ -13,8 +13,6 @@ project maps the **entire surface** of the K-S2's API against a physical camera,
 writes it up as a proper dissection, and ships a clean client that is lighter
 and more capable than the vendor's own Image Sync app.
 
-Visit the pages website ![here](https://picklerick2005.github.io/PyKS2/).
-
 > **Two things make this more than "another camera library":**
 > 1. A full [protocol dissection](https://picklerick2005.github.io/PyKS2/PROTOCOL.html) and
 >    [reverse-engineering methodology](https://picklerick2005.github.io/PyKS2/METHODOLOGY.html), every endpoint,
