@@ -3,7 +3,7 @@ title: Protocol Dissection
 nav_order: 2
 ---
 
-# The Pentax K-S2 WiFi API; a dissection
+# The Pentax K-S2 WiFi API; a complete dissection
 
 Everything here was verified against a physical **Pentax K-S2** running firmware
 `01.10`. Where a claim rests on an observation, the observation is stated. Where
@@ -13,8 +13,7 @@ earlier assumptions), the contradiction is called out and resolved with data.
 The camera exposes an undocumented HTTP API on `192.168.0.1` when its built-in
 WiFi is active. There is no official developer documentation; the only public
 prior art is a partial 2016 write-up of the closely-related K-1. This document
-is a behaviourally-verified map of the K-S2's surface as far as I could
-exercise it.
+is the first complete, behaviourally-verified map of the K-S2's surface.
 
 ---
 

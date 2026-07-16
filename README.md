@@ -1,4 +1,4 @@
-# pyks2
+# PyKS2
 
 [![tests](https://github.com/PICKLERICK2005/pyks2/actions/workflows/test.yml/badge.svg)](https://github.com/PICKLERICK2005/pyks2/actions/workflows/test.yml)
 [![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
@@ -9,9 +9,9 @@ built-in WiFi, built on an extensive, hardware-verified reverse-engineering of
 the camera's undocumented HTTP API. (A web GUI is planned; see below.)
 
 The K-S2 has a WiFi remote-control API, but Pentax never documented it. This
-project maps the API surface I could exercise against a physical camera, writes
-it up as a dissection, and ships a clean client that is lighter and more
-capable than the vendor's own Image Sync app.
+project maps the **entire surface** of the K-S2's API against a physical camera,
+writes it up as a proper dissection, and ships a clean client that is lighter
+and more capable than the vendor's own Image Sync app.
 
 ## Known gaps
 
@@ -31,15 +31,14 @@ Everything else is behaviourally verified against the hardware below.
 
 - **Body:** Pentax K-S2
 - **Firmware:** 01.10
-- **Lenses:** <fill in — e.g. smc PENTAX-DA 18–50mm, DA 50–200mm>
-- **OS:** <fill in — e.g. Windows 11, Python 3.13>
+- **Lenses:** smc PENTAX-DA 18–50mm, DA 50–200mm
 
 Other Pentax bodies with the same WiFi stack (K-1, KP, K-70, …) likely share
-much of this API but are **untested** — reports welcome.
+much of this API but are **untested**, reports welcome.
 
 > **Two things make this more than "another camera library":**
-> 1. A practical [protocol dissection](https://picklerick2005.github.io/PyKS2/PROTOCOL.html) and
->    [reverse-engineering methodology](https://picklerick2005.github.io/PyKS2/METHODOLOGY.html): the endpoints, quirks, and hardware
+> 1. A full [protocol dissection](https://picklerick2005.github.io/PyKS2/PROTOCOL.html) and
+>    [reverse-engineering methodology](https://picklerick2005.github.io/PyKS2/METHODOLOGY.html): the endpoints quirks, and hardware
 >    limitations I could exercise on my camera, with the raw captures to back
 >    it up.
 > 2. A design that **beats the official app**: event-driven via the camera's

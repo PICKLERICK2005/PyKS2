@@ -47,7 +47,7 @@ five-groups-×-four-facets structure became clear.
 Hitting 40 endpoints by hand doesn't scale and isn't fun, so the
 probing was scripted. A single sequenced scrubber:
 
-- fired the endpoints I could reach in a defined order,
+- fired every endpoint in a defined order,
 - captured status, headers, timing, and body for each,
 - wrote every response to disk (the curated results became
   [`examples/`](../examples/)),
