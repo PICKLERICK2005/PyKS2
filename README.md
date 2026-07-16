@@ -5,21 +5,46 @@
 [![license](https://img.shields.io/badge/license-MIT-green)](https://github.com/PICKLERICK2005/pyks2/blob/main/LICENSE)
 
 A Python library and CLI for controlling the **Pentax K-S2** over its
-built-in WiFi, built on a complete, hardware-verified reverse-engineering of
+built-in WiFi, built on an extensive, hardware-verified reverse-engineering of
 the camera's undocumented HTTP API. (A web GUI is planned; see below.)
 
 The K-S2 has a WiFi remote-control API, but Pentax never documented it. This
-project maps the **entire surface** of the K-S2's API against a physical camera,
-writes it up as a proper dissection, and ships a clean client that is lighter
-and more capable than the vendor's own Image Sync app.
+project maps the API surface I could exercise against a physical camera, writes
+it up as a dissection, and ships a clean client that is lighter and more
+capable than the vendor's own Image Sync app.
+
+## Known gaps
+
+This maps what I could exercise on my own body. Two areas are not fully
+verified:
+
+- **GPS** — the optional top-mounted Pentax GPS unit surfaces in
+  `exposureModeList` but I couldn't test it (I don't own the unit). Untested.
+- **Live-view digital zoom** — `POST /v1/liveview/zoom` exists but was gated on
+  my setup: every parameter shape I tried returned `errCode 200`. It may need a
+  lens or camera state I couldn't reach over the API. No working digital-zoom
+  control was observed.
+
+Everything else is behaviourally verified against the hardware below.
+
+## Tested on
+
+- **Body:** Pentax K-S2
+- **Firmware:** 01.10
+- **Lenses:** <fill in — e.g. smc PENTAX-DA 18–50mm, DA 50–200mm>
+- **OS:** <fill in — e.g. Windows 11, Python 3.13>
+
+Other Pentax bodies with the same WiFi stack (K-1, KP, K-70, …) likely share
+much of this API but are **untested** — reports welcome.
 
 > **Two things make this more than "another camera library":**
-> 1. A full [protocol dissection](https://picklerick2005.github.io/PyKS2/PROTOCOL.html) and
->    [reverse-engineering methodology](https://picklerick2005.github.io/PyKS2/METHODOLOGY.html), every endpoint,
->    every quirk, every hardware limitation, with the raw captures to prove it.
+> 1. A practical [protocol dissection](https://picklerick2005.github.io/PyKS2/PROTOCOL.html) and
+>    [reverse-engineering methodology](https://picklerick2005.github.io/PyKS2/METHODOLOGY.html): the endpoints, quirks, and hardware
+>    limitations I could exercise on my camera, with the raw captures to back
+>    it up.
 > 2. A design that **beats the official app**: event-driven via the camera's
 >    WebSocket instead of the poll-storm Image Sync uses (~90% of its total
->    requests were just polling one endpoint while interacting with app actively).
+>    requests were just polling one endpoint while interacting with the app actively).
 
 ---
 
@@ -34,7 +59,7 @@ pyks2/          the library (camera-only HTTP client, typed models, WS events)
   ├─ errors.py       typed exceptions (errCode-aware)
   └─ cli.py          the command-line interface
 docs/           the reverse-engineering write-up (GitHub Pages source)
-  ├─ PROTOCOL.md     the complete API dissection
+  ├─ PROTOCOL.md     the API dissection
   └─ METHODOLOGY.md  how it was probed (approach, false trails, traffic capture)
 examples/       real captured JSON responses + the machine-readable API reference
 ```
@@ -122,10 +147,11 @@ are the shipping surfaces.*
 
 The heart of this project is the write-up. Highlights:
 
-- **The full API is 38 endpoints**, organised as five read *groups*
-  (`constants`/`params`/`variables`/`status`/`props`) × four *subsystems*
-  (`camera`/`lens`/`liveview`/`device`), plus capture/focus/photo/liveview
-  actions and a WebSocket.
+- **The API surface I mapped spans 38 endpoint templates**, organised as five
+  read *groups* (`constants`/`params`/`variables`/`status`/`props`) × four
+  *subsystems* (`camera`/`lens`/`liveview`/`device`), plus capture/focus/photo/
+  liveview actions and a WebSocket. The main gaps I could not verify were GPS
+  and LiveView Zoom.
 - **Two protocol laws** every client must respect: the real status is in the
   body's `errCode` (not the HTTP status), and datetime/numeric formats are
   inconsistent across endpoints.
@@ -165,13 +191,21 @@ KP, K-70, K-3…) share much of this API family but differ in specifics. Running
 the probing approach in [docs/METHODOLOGY.md](https://picklerick2005.github.io/PyKS2/METHODOLOGY.html) on another
 body and sending the diffs is the most useful contribution you could make!
 
+## Gaps
+
+The only remaining gaps in this project would be:
+1- The endpoint affiliated with the GPS module
+2- The Liveview Zoom endpoint
+
+Both of which likely require a corresponding hardware addon.
+
 ## License
 
 MIT — see [LICENSE](https://github.com/PICKLERICK2005/pyks2/blob/main/LICENSE).
 
 ## Acknowledgements
 
-The 2016 K-1 WiFi analysis on the antiguru wiki was a useful starting point for
+The [2016 K-1 WiFi analysis](https://www.pentaxforums.com/forums/190-pentax-k-1-k-1-ii/359018-k-1-wifi-transfer.html) on the pentax forums was a useful starting point for
 hypotheses. Everything here was independently verified against a physical K-S2.
 This project inspects only the camera's own network behaviour and my own hardware;
 it contains no vendor code or any unmentioned references.

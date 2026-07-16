@@ -5,20 +5,20 @@ All notable changes to **pyks2** are documented here. This project follows
 
 ## [1.0.0] — 2026-07-16
 
-First stable release: a complete, hardware-verified reverse-engineering of the
-Pentax K-S2's built-in WiFi HTTP API, with a Python library, a CLI, and a full
-protocol write-up. Every one of the camera's 38 API endpoint templates is
-characterised — confirmed working, confirmed read-only, or confirmed
-unsupported — with zero remaining unknowns.
+First stable release: an extensive, hardware-verified reverse-engineering of the
+Pentax K-S2's built-in WiFi HTTP API, with a Python library, a CLI, and a
+protocol write-up. The camera's 38 API endpoint templates are characterised as
+confirmed working, confirmed read-only, or confirmed unsupported, with the
+remaining gaps noted in the docs.
 
 ### The dissection
-- Complete map of the `/v1/*` API: five read groups
+- Broad map of the `/v1/*` API: five read groups
   (`constants`/`params`/`variables`/`status`/`props`) × four subsystems
   (`camera`/`lens`/`liveview`/`device`), plus capture, focus, photo, live view,
   and the `/v1/changes` WebSocket.
 - Two protocol laws documented: `errCode` lives in the body (not the HTTP
   status), and datetime/numeric formats vary by endpoint.
-- Full mode-dial characterisation (P/Sv/Tv/Av/TAv/M/**Bulb**/U1/U2/auto/scene/
+- Mode-dial behaviour is characterised (P/Sv/Tv/Av/TAv/M/**Bulb**/U1/U2/auto/scene/
   HDR/movie), with a per-mode value-writability matrix driven by list emptiness.
 - Hardware interlocks mapped and explained: AF/MF lever, mode dial, movie mode
   disabling WiFi, the SD-door disconnect, device/lens read-only params, and the
