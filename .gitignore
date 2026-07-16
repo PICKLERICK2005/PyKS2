@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.env
+*.log
+# downloaded media
+*.dng
+*.DNG
+*.pef
+*.PEF
+latest.jpg
+frame*.jpg
+.DS_Store
+.idea/
+.vscode/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/

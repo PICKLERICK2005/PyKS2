@@ -1,0 +1,317 @@
+{
+  "_meta": {
+    "title": "Pentax K-S2 WiFi HTTP API \u2014 annotated reference",
+    "description": "Complete, hardware-verified map of the Pentax K-S2 built-in WiFi HTTP API. Every endpoint was probed against a physical PENTAX K-S2 (firmware 01.10). This file is both human-readable documentation and a machine-readable spec that drives the pyks2 library and its tests.",
+    "camera": {
+      "model": "PENTAX K-S2",
+      "firmwareVersion": "01.10",
+      "default_ip": "192.168.0.1",
+      "ssid_pattern": "PENTAX_XXXXXX"
+    },
+    "protocol_laws": [
+      "LAW 1 (errCode-in-body): The HTTP status line is almost always 200. The REAL status is the JSON body's `errCode` field (200 ok, 400 bad request, 412 precondition failed). Clients MUST parse the body, not trust the HTTP code. Exception: genuinely unhandled methods (e.g. DELETE) return a raw HTML error page, not JSON.",
+      "LAW 2 (datetime formats vary): /v1/ping returns ISO-8601 (2026-07-15T11:43:15). /v1/photos/.../info returns YY:MM:DD:HH:MM:SS with colons (26:07:15:11:09:11). Numeric fields format inconsistently (xv seen as '0', '0.0', '-0.7'). Parsers must tolerate all forms.",
+      "LAW 3 (connection): Requests are most reliable with Connection: close and a fresh socket. Content-Type text/xml or x-www-form-urlencoded both accepted."
+    ],
+    "hardware_interlocks": [
+      "AF/MF lever is physical, read-only over API, and fires NO change event.",
+      "Mode dial is physical, read-only over API (fires changed:camera).",
+      "Movie mode DISABLES the WiFi API entirely ('function unavailable in current mode').",
+      "Opening the SD card door KILLS the WiFi connection; camera drops to off/idle.",
+      "device params (ssid/channel/key) and lens params (focusMode) are read-only (PUT -> 400).",
+      "The camera's WiFi AP uses CLIENT ISOLATION: two client devices cannot talk to each other through it."
+    ],
+    "field_notes": [
+      "exposureModeOption (in variables/camera) is empty ('') in every mode on the K-S2 (M/Av/Tv/P/autopict/TAv) \u2014 present in schema but unused on this body.",
+      "tvList emptiness signals tv-writability: non-empty in M/Tv/P/TAv (tv writable), empty in Av/auto/scene (tv camera-controlled, writes ignored). Same 'empty list = field not user-controllable in this mode' principle as avList being dynamic.",
+      "storages[].remain is a FRAME COUNT (shots remaining), not bytes/MB. Observed 6467 (near-empty), 3886, and 1 (one shot left).",
+      "battery is an integer percentage (observed 100, 66, 0) \u2014 not coarse buckets. status/device also has 'hot' (boolean thermal flag).",
+      "Lens identity is NOT exposed over WiFi: constants/lens is empty and both lenses report identical data. Only focusMode/focused/focusCenters exist. The only lens-dependent signal is the dynamic avList in variables/camera. You cannot identify the mounted lens via the API.",
+      "ISO AUTO is set via sv=auto (or AUTO); returns 200 and resolves to a computed value on readback. Numeric bounds validated (sv=999999 -> 400).",
+      "xv (EV comp) is writable across the full +5.0..-5.0 range and validated server-side (xv=+9.9 -> 400).",
+      "Per-mode value writability (via list emptiness) confirmed across the whole dial: P=av,tv,sv,xv | Sv=sv,xv | Tv=tv,sv,xv | Av=av,sv,xv | TAv=av,tv,xv | M=all | B(bulb)=av,sv | U1/U2=all | autopict/scene/AHDR=sv,xv.",
+      "Bare group roots merge facets: GET /v1/constants returns all camera mode-lists PLUS device identity (model/firmware/mac/serial) in one call; GET /v1/params returns camera settings PLUS lens focusMode PLUS device ssid/key/channel. Handy single-fetch handshake/state endpoints.",
+      "Bulb: shoot/start returns a shoot-style body (focused/focusCenters/captured:false); shoot/finish returns minimal {errCode:200}."
+    ],
+    "mode_dial": {
+      "note": "Full physical dial characterised over WiFi. Movie DISABLES WiFi.",
+      "positions": {
+        "P": "Program; av,tv,sv,xv writable",
+        "Sv": "Sensitivity priority; sv,xv writable; svList has 28 finer steps",
+        "Tv": "Shutter priority; tv,sv,xv writable",
+        "Av": "Aperture priority; av,sv,xv writable",
+        "TAv": "Shutter+Aperture priority; av,tv,xv writable",
+        "M": "Manual; all writable",
+        "B": "BULB; av,sv writable; NO tv/xv. Capture via shoot/start+shoot/finish (200), NOT plain shoot (412)",
+        "U1/U2": "USER modes; behave like their saved exposure mode; all writable",
+        "autopict": "green Auto Picture; only sv,xv writable",
+        "scene": "SCN; 18 scene sub-modes selected on-camera; only sv,xv writable",
+        "AHDR": "Advanced HDR; only sv,xv writable",
+        "movie": "DISABLES the WiFi API entirely (confirmed: ping fails)",
+        "X": "no separate X-sync dial position on the K-S2 (stays on B)",
+        "gps": "in exposureModeList but no dial position / no GPS on this body"
+      }
+    }
+  },
+  "endpoints": [
+    {
+      "path": "/v1/apis",
+      "method": "GET",
+      "status": "confirmed",
+      "purpose": "Self-describing list of all API endpoints.",
+      "example_file": "apis.json",
+      "notes": "Lists 40 endpoint templates. The authoritative surface."
+    },
+    {
+      "path": "/v1/ping",
+      "method": "GET",
+      "status": "confirmed",
+      "purpose": "Cheap liveness check + ISO datetime. Ideal heartbeat.",
+      "example_file": "ping.json",
+      "timing_ms": 44,
+      "notes": "No orange-LED / card-read risk. Use for connection health."
+    },
+    {
+      "path": "/v1/props",
+      "method": "GET",
+      "status": "confirmed",
+      "purpose": "Legacy flat superset of all state (K-1 style). Lists + values + device + storage in one blob.",
+      "example_file": "props.json",
+      "timing_ms": 121,
+      "notes": "Image Sync polls this relentlessly (618/691 requests in capture). pyks2 prefers the decomposed /v1/{group}/{facet} endpoints + the /v1/changes WebSocket instead."
+    },
+    {
+      "path": "/v1/constants/camera",
+      "method": "GET",
+      "status": "confirmed",
+      "purpose": "Static capability lists (the *List arrays): WBModeList, stillSizeList, shootModeList, effectList, filterList, exposureModeList, resoList, movieSizeList.",
+      "example_file": "constants-camera.json",
+      "notes": "Fetch ONCE. These are the dropdown option sources for the GUI."
+    },
+    {
+      "path": "/v1/constants/lens",
+      "method": "GET",
+      "status": "confirmed",
+      "purpose": "Lens capability constants.",
+      "example_file": "constants-lens.json",
+      "notes": "Empty ({errCode,errMsg} only) on the tested body/lens."
+    },
+    {
+      "path": "/v1/constants/device",
+      "method": "GET",
+      "status": "confirmed",
+      "purpose": "Device identity: model, firmwareVersion, macAddress, serialNo, channelList.",
+      "example_file": "constants-device.json"
+    },
+    {
+      "path": "/v1/constants/liveview",
+      "method": "GET",
+      "status": "confirmed",
+      "purpose": "Liveview capability constants.",
+      "example_file": "constants-liveview.json",
+      "notes": "Empty on tested body."
+    },
+    {
+      "path": "/v1/params/camera",
+      "method": "GET",
+      "status": "confirmed",
+      "purpose": "Current camera settings: av, tv, sv, xv, WBMode, shootMode, exposureMode, stillSize, movieSize, effect, filter.",
+      "example_file": "params-camera.json"
+    },
+    {
+      "path": "/v1/params/camera",
+      "method": "PUT",
+      "status": "confirmed",
+      "purpose": "Write camera settings. Body: form-encoded key=value(&key=value).",
+      "request_body_example": "av=8.0&sv=400",
+      "notes": "STICKS and echoes the FULL camera state back (lists + values), so a PUT doubles as a GET. Validates server-side: illegal value -> errCode 400. IMPORTANT: avList is DYNAMIC (changes with lens/aperture state) \u2014 re-fetch after changes, never cache globally. Some tv tokens may be rejected depending on exposureMode. tv WRITABILITY RULE: tv is writable only when the mode reports a non-empty tvList (M/Tv/P/TAv). In Av and auto/scene modes tvList is empty and tv writes return 200 but are silently ignored (camera owns shutter). Check tvList emptiness before offering tv as editable."
+    },
+    {
+      "path": "/v1/params/lens",
+      "method": "GET",
+      "status": "confirmed",
+      "purpose": "Current lens state: focusMode.",
+      "example_file": "params-lens.json"
+    },
+    {
+      "path": "/v1/params/lens",
+      "method": "PUT",
+      "status": "confirmed-readonly",
+      "purpose": "Attempt to write lens params.",
+      "request_body_example": "focusMode=mf",
+      "notes": "REJECTED (errCode 400). focusMode is controlled by the physical AF/MF lever and cannot be set over WiFi."
+    },
+    {
+      "path": "/v1/params/device",
+      "method": "GET",
+      "status": "confirmed",
+      "purpose": "WiFi device params: ssid, key, channel.",
+      "example_file": "params-device.json"
+    },
+    {
+      "path": "/v1/params/device",
+      "method": "PUT",
+      "status": "confirmed-readonly",
+      "purpose": "Attempt to write device/WiFi params.",
+      "request_body_example": "channel=1",
+      "notes": "REJECTED (errCode 400). WiFi config is not settable over the API."
+    },
+    {
+      "path": "/v1/params/liveview",
+      "method": "GET",
+      "status": "confirmed",
+      "purpose": "Liveview params.",
+      "example_file": "params-liveview.json",
+      "notes": "Empty on tested body."
+    },
+    {
+      "path": "/v1/variables/{facet}",
+      "method": "GET",
+      "status": "confirmed",
+      "purpose": "Read-only 'everything' view for a facet: params + lists + live values (battery, storage). facet in {camera,lens,liveview,device} or bare /v1/variables.",
+      "example_file": "variables.json",
+      "notes": "See variables-camera.json, variables-lens.json, variables-device.json, variables-liveview.json."
+    },
+    {
+      "path": "/v1/status/{facet}",
+      "method": "GET",
+      "status": "confirmed",
+      "purpose": "Read-only transient runtime state: state (idle/capturing), focused, focusCenters, liveState, battery, storages.",
+      "example_file": "status.json",
+      "notes": "See status-camera.json, status-lens.json, status-device.json, status-liveview.json."
+    },
+    {
+      "path": "/v1/props/{facet}",
+      "method": "GET",
+      "status": "confirmed",
+      "purpose": "Per-facet slice of the legacy props blob.",
+      "example_file": "props-lens.json",
+      "notes": "props-device.json also captured."
+    },
+    {
+      "path": "/v1/camera/shoot",
+      "method": "POST",
+      "status": "confirmed",
+      "purpose": "Fire the shutter (stills). Body: af=auto|on|off.",
+      "request_body_example": "af=auto",
+      "example_file": "camera-shoot-response.json",
+      "notes": "Returns {focused, focusCenters, captured}. `captured` is ALWAYS false synchronously \u2014 capture is async; detect completion via /v1/photos/latest/info or the changed:storage WebSocket event. af=off releases the shutter without AF hunting (correct for MF lenses / fixed-focus rigs). af=auto/on hunt for focus first. CARD-FULL: returns errCode 200 with focused:false, captured:false even when the card is full and NOTHING is written. A 200 does NOT prove a frame landed \u2014 always verify via latest/info path-change or the storage event. In Bulb mode plain shoot 412s (use shoot/start + shoot/finish)."
+    },
+    {
+      "path": "/v1/camera/shoot/start",
+      "method": "POST",
+      "status": "confirmed",
+      "purpose": "Bulb exposure START (open shutter). NOT movie.",
+      "example_file": "error-412-precondition.json",
+      "notes": "CORRECTED: these are the BULB long-exposure mechanism, not movie record. In Bulb mode (dial=B) shoot/start returns 200 and opens the shutter; shoot/finish returns 200 and closes it. They 412 in non-bulb modes (which is why they looked 'unreachable' before \u2014 we hadn't tested with the dial on B). Plain /v1/camera/shoot still 412s in bulb mode; use start/finish instead."
+    },
+    {
+      "path": "/v1/camera/shoot/finish",
+      "method": "POST",
+      "status": "confirmed",
+      "purpose": "Bulb exposure FINISH (close shutter). NOT movie.",
+      "example_file": "error-412-precondition.json",
+      "notes": "CORRECTED: bulb close. Returns 200 in Bulb mode after a shoot/start. See shoot/start."
+    },
+    {
+      "path": "/v1/lens/focus",
+      "method": "POST",
+      "status": "confirmed",
+      "purpose": "Drive autofocus / set AF point. Body: pos=x,y.",
+      "request_body_example": "pos=52,52",
+      "notes": "Returns focused:true on success. Works over WiFi even though focusMode (AF/MF) is read-only \u2014 you can trigger AF and set the point, you just can't switch AF<->MF."
+    },
+    {
+      "path": "/v1/photos",
+      "method": "GET",
+      "status": "confirmed",
+      "purpose": "Enumerate photos on the card. Structure: {dirs:[{name, files:[...]}]}.",
+      "example_file": "photos-listing.json",
+      "timing_ms": {
+        "8_files": "42-159",
+        "80_files": "320-410"
+      },
+      "notes": "MYTH BUSTED: this does NOT hang. Earlier 'hangs indefinitely' reports were a keep-alive/bad-card artifact of the earliest probes. Verified reliable at 8 and 80 files, and even IMMEDIATELY after a 56s DNG download. Listing time scales ~linearly (~4ms/file). Safe to enumerate."
+    },
+    {
+      "path": "/v1/photos?limit=N",
+      "method": "GET",
+      "status": "confirmed",
+      "purpose": "Enumerate but cap the result to the first N files.",
+      "notes": "UNDOCUMENTED bonus: ?limit=N works, returns constant ~60ms/105B regardless of card size. Image Sync does NOT use it. Other params (dir, offset, page, count, from/to) are IGNORED (return full listing) \u2014 there is NO offset/cursor, so no true pagination, just a head limit."
+    },
+    {
+      "path": "/v1/photos/{dir}/{file}/info",
+      "method": "GET",
+      "status": "confirmed",
+      "purpose": "Per-image metadata (av, tv, sv, xv, orientation, datetime, cameraModel).",
+      "notes": "Works for ARBITRARY files, not just recent ones \u2014 enables full card browsing. ~252 bytes each."
+    },
+    {
+      "path": "/v1/photos/latest/info",
+      "method": "GET",
+      "status": "confirmed",
+      "purpose": "Metadata for the most recent shot. Special fast path.",
+      "example_file": "photos-latest-info.json",
+      "notes": "captured:true once written. Poll this (or use changed:storage event) to detect capture completion. datetime here is the YY:MM:DD:... format (LAW 2)."
+    },
+    {
+      "path": "/v1/photos/{dir}/{file}?size=view",
+      "method": "GET",
+      "status": "confirmed",
+      "purpose": "Download a JPEG preview (~54KB, 720x480-ish).",
+      "notes": "This is what Image Sync uses for gallery thumbnails. The ONLY working preview size."
+    },
+    {
+      "path": "/v1/photos/{dir}/{file}?size=thumb",
+      "method": "GET",
+      "status": "unsupported",
+      "purpose": "Small thumbnail (attempted).",
+      "example_file": "error-400-bad-request.json",
+      "notes": "Returns errCode 400. NOT supported on K-S2. Use size=view instead."
+    },
+    {
+      "path": "/v1/photos/{dir}/{file}?size=full",
+      "method": "GET",
+      "status": "confirmed",
+      "purpose": "Download the full raw DNG (~18MB).",
+      "notes": "~55 seconds over WiFi. Same result as no size param. Too slow for bulk; fine for single grabs. For bulk ingest, use USB/SD card reader."
+    },
+    {
+      "path": "/v1/photos/{dir}/{file}",
+      "method": "GET",
+      "status": "confirmed",
+      "purpose": "Download the raw file (no size param = full DNG, ~18MB).",
+      "notes": "Identical to ?size=full."
+    },
+    {
+      "path": "/v1/photos/{dir}/{file}",
+      "method": "DELETE",
+      "status": "unsupported",
+      "purpose": "Delete a photo (attempted).",
+      "notes": "Returns a raw HTML '400 Bad Request' page (NOT JSON) \u2014 DELETE is not a handled method. Photos cannot be deleted over WiFi."
+    },
+    {
+      "path": "/v1/liveview",
+      "method": "GET",
+      "status": "confirmed",
+      "purpose": "MJPEG live view stream.",
+      "notes": "Content-Type: multipart/x-mixed-replace; boundary=--boundarydonotcross. Frames are 720x480 baseline JPEG, ~23KB each. Part-headers carry only 'Content-type: image/jpg' \u2014 NO embedded focus/exposure/histogram metadata (unlike K-1). Any overlays must be computed client-side or pulled from /v1/status. Point an <img src> at it and it just works in a browser."
+    },
+    {
+      "path": "/v1/liveview/zoom",
+      "method": "POST",
+      "status": "confirmed",
+      "purpose": "Digital LV zoom/pan endpoint \u2014 accepts POST but has no observable effect over WiFi on the K-S2.",
+      "notes": "CONFIRMED no observable effect over WiFi on the test rig: with an active liveview stream, every candidate param returns errCode 200 (zoom/level/scale/magnify/ratio/pos/x-y/on, incl. nonsense) but the live frame never changes. The endpoint is reachable and stream-gated (412 without a stream) and does not validate params. Cause unconfirmed \u2014 may require a hardware capability the test lenses lack (both are motorized-zoom kit lenses) or a camera state not reachable via the API. No usable digital zoom observed via the API on this setup."
+    },
+    {
+      "path": "/v1/changes",
+      "method": "GET (WebSocket upgrade)",
+      "status": "confirmed",
+      "purpose": "WebSocket event stream. Upgrades with HTTP 101.",
+      "example_file": "changes-events.jsonl",
+      "notes": "Pushes {errCode,errMsg,changed:X} where X is a COARSE category. Only TWO values observed: 'camera' (any setting change: mode dial, aperture, ISO) and 'storage' (a file was written). NOT a value push \u2014 it's a 'go re-GET this group' poke. Fires NOTHING for AF/MF lever, half-press, SD door, flash. This REPLACES Image Sync's poll-storm: connect once, react to events, re-fetch only the changed group. Extended listen across varied actions produced ONLY 'camera' and 'storage' \u2014 the two-value vocabulary is exhaustive (no battery/idle/playback/lens events)."
+    }
+  ]
+}

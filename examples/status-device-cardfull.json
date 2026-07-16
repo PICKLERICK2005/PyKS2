@@ -1,0 +1,19 @@
+{
+  "errCode": 200,
+  "errMsg": "OK",
+  "hot": false,
+  "battery": 66,
+  "storages": [
+    {
+      "name": "sd1",
+      "equipped": true,
+      "writable": true,
+      "available": true,
+      "active": true,
+      "format": "dng",
+      "remain": 1,
+      "dir": "100_1507",
+      "file": "IMGP2056.DNG"
+    }
+  ]
+}

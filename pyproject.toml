@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=77.0.3", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyks2"
+version = "1.0.0"
+description = "A Python client and CLI for the Pentax K-S2's undocumented WiFi HTTP API, plus a reverse-engineering write-up. (Web GUI planned.)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Jamal El Siblany", email = "jamalsiblani@gmail.com" }]
+keywords = ["pentax", "k-s2", "camera", "wifi", "reverse-engineering",
+            "tethering", "remote-control", "mjpeg"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Topic :: Multimedia :: Graphics :: Capture",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "requests>=2.25",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "mypy>=1.0", "ruff>=0.4"]
+
+[project.scripts]
+pyks2 = "pyks2.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/PICKLERICK2005/pyks2"
+Documentation = "https://PICKLERICK2005.github.io/pyks2/"
+Repository = "https://github.com/PICKLERICK2005/pyks2"
+Issues = "https://github.com/PICKLERICK2005/pyks2/issues"
+Changelog = "https://github.com/PICKLERICK2005/pyks2/blob/main/CHANGELOG.md"
+
+[tool.setuptools]
+packages = ["pyks2"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py39"
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_ignores = true
+ignore_missing_imports = true

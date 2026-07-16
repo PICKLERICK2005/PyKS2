@@ -1,0 +1,262 @@
+[
+  {
+    "exposureMode": "M",
+    "exposureModeOption": "",
+    "avList_len": 16,
+    "tvList_len": 54,
+    "svList_len": 10,
+    "xvList_len": 31,
+    "current": {
+      "av": "5.6",
+      "tv": "1.30",
+      "sv": "100",
+      "xv": "0.0",
+      "shootMode": "single",
+      "stillSize": "L3"
+    },
+    "state": "idle",
+    "dial_prompt": "(current position \u2014 just Enter)"
+  },
+  {
+    "exposureMode": "P",
+    "exposureModeOption": "",
+    "avList_len": 16,
+    "tvList_len": 54,
+    "svList_len": 11,
+    "xvList_len": 31,
+    "current": {
+      "av": "5.6",
+      "tv": "1.4",
+      "sv": "100",
+      "xv": "0.0",
+      "shootMode": "single",
+      "stillSize": "L3"
+    },
+    "state": "idle",
+    "dial_prompt": "P (Program)"
+  },
+  {
+    "exposureMode": "SV",
+    "exposureModeOption": "",
+    "avList_len": 0,
+    "tvList_len": 0,
+    "svList_len": 28,
+    "xvList_len": 31,
+    "current": {
+      "av": "5.6",
+      "tv": "1.4",
+      "sv": "100",
+      "xv": "0.0",
+      "shootMode": "single",
+      "stillSize": "L3"
+    },
+    "state": "idle",
+    "dial_prompt": "Sv (Sensitivity Priority)"
+  },
+  {
+    "exposureMode": "TV",
+    "exposureModeOption": "",
+    "avList_len": 0,
+    "tvList_len": 54,
+    "svList_len": 11,
+    "xvList_len": 31,
+    "current": {
+      "av": "5.6",
+      "tv": "1.30",
+      "sv": "100",
+      "xv": "0.0",
+      "shootMode": "single",
+      "stillSize": "L3"
+    },
+    "state": "idle",
+    "dial_prompt": "Tv (Shutter Priority)"
+  },
+  {
+    "exposureMode": "AV",
+    "exposureModeOption": "",
+    "avList_len": 16,
+    "tvList_len": 0,
+    "svList_len": 11,
+    "xvList_len": 31,
+    "current": {
+      "av": "5.6",
+      "tv": "1.4",
+      "sv": "100",
+      "xv": "0.0",
+      "shootMode": "single",
+      "stillSize": "L3"
+    },
+    "state": "idle",
+    "dial_prompt": "Av (Aperture Priority)"
+  },
+  {
+    "exposureMode": "TAV",
+    "exposureModeOption": "",
+    "avList_len": 16,
+    "tvList_len": 54,
+    "svList_len": 0,
+    "xvList_len": 31,
+    "current": {
+      "av": "5.6",
+      "tv": "1.30",
+      "sv": "640",
+      "xv": "0.0",
+      "shootMode": "single",
+      "stillSize": "L3"
+    },
+    "state": "idle",
+    "dial_prompt": "TAv (Shutter & Aperture Priority)"
+  },
+  {
+    "exposureMode": "M",
+    "exposureModeOption": "",
+    "avList_len": 16,
+    "tvList_len": 54,
+    "svList_len": 10,
+    "xvList_len": 31,
+    "current": {
+      "av": "5.6",
+      "tv": "1.30",
+      "sv": "100",
+      "xv": "0.0",
+      "shootMode": "single",
+      "stillSize": "L3"
+    },
+    "state": "idle",
+    "dial_prompt": "M (Manual)"
+  },
+  {
+    "exposureMode": "B",
+    "exposureModeOption": "",
+    "avList_len": 16,
+    "tvList_len": 0,
+    "svList_len": 10,
+    "xvList_len": 0,
+    "current": {
+      "av": "5.6",
+      "tv": "1.60",
+      "sv": "100",
+      "xv": "0.0",
+      "shootMode": "single",
+      "stillSize": "L3"
+    },
+    "state": "idle",
+    "dial_prompt": "B (BULB) \u2014 long-exposure; we test capture carefully here",
+    "bulb_shoot": "{\"errCode\": 412,\"errMsg\": \"Precondition Failed\"}\n",
+    "bulb_shoot_start": "{\"errCode\": 200,\n \"errMsg\": \"OK\",\n \"focused\": false,\n \"focusCenters\": [],\n \"capt",
+    "bulb_shoot_finish": "{\"errCode\": 200,\"errMsg\": \"OK\"}\n"
+  },
+  {
+    "exposureMode": "B",
+    "exposureModeOption": "",
+    "avList_len": 16,
+    "tvList_len": 0,
+    "svList_len": 10,
+    "xvList_len": 0,
+    "current": {
+      "av": "5.6",
+      "tv": "1.60",
+      "sv": "100",
+      "xv": "0.0",
+      "shootMode": "single",
+      "stillSize": "L3"
+    },
+    "state": "idle",
+    "dial_prompt": "X (flash X-sync) if present on your dial (else Enter to skip)"
+  },
+  {
+    "exposureMode": "U1",
+    "exposureModeOption": "",
+    "avList_len": 16,
+    "tvList_len": 54,
+    "svList_len": 11,
+    "xvList_len": 31,
+    "current": {
+      "av": "5.6",
+      "tv": "1.100",
+      "sv": "1600",
+      "xv": "0.0",
+      "shootMode": "single",
+      "stillSize": "L3"
+    },
+    "state": "idle",
+    "dial_prompt": "USER1 / U1"
+  },
+  {
+    "exposureMode": "U2",
+    "exposureModeOption": "",
+    "avList_len": 16,
+    "tvList_len": 54,
+    "svList_len": 11,
+    "xvList_len": 31,
+    "current": {
+      "av": "5.6",
+      "tv": "1.100",
+      "sv": "1600",
+      "xv": "0.0",
+      "shootMode": "single",
+      "stillSize": "L3"
+    },
+    "state": "idle",
+    "dial_prompt": "USER2 / U2"
+  },
+  {
+    "exposureMode": "autopict",
+    "exposureModeOption": "",
+    "avList_len": 0,
+    "tvList_len": 0,
+    "svList_len": 11,
+    "xvList_len": 31,
+    "current": {
+      "av": "5.6",
+      "tv": "1.4",
+      "sv": "100",
+      "xv": "0.0",
+      "shootMode": "single",
+      "stillSize": "L3"
+    },
+    "state": "idle",
+    "dial_prompt": "Green / Auto Picture"
+  },
+  {
+    "exposureMode": "scene",
+    "exposureModeOption": "",
+    "avList_len": 0,
+    "tvList_len": 0,
+    "svList_len": 11,
+    "xvList_len": 31,
+    "current": {
+      "av": "5.6",
+      "tv": "1.4",
+      "sv": "100",
+      "xv": "0.0",
+      "shootMode": "single",
+      "stillSize": "L3"
+    },
+    "state": "idle",
+    "dial_prompt": "SCN (Scene)"
+  },
+  {
+    "exposureMode": "AHDR",
+    "exposureModeOption": "",
+    "avList_len": 0,
+    "tvList_len": 0,
+    "svList_len": 11,
+    "xvList_len": 31,
+    "current": {
+      "av": "5.6",
+      "tv": "1.4",
+      "sv": "100",
+      "xv": "0.0",
+      "shootMode": "single",
+      "stillSize": "L3"
+    },
+    "state": "idle",
+    "dial_prompt": "HDR (Advanced HDR)"
+  },
+  {
+    "dial": "Movie \u2014 WARNING: this likely DISABLES WiFi. Enter to try, then we confirm the drop and you switch back + reconnect",
+    "wifi_up_in_this_mode": false,
+    "note": "movie mode WiFi test"
+  }
+]

@@ -1,0 +1,19 @@
+{
+  "errCode": 200,
+  "errMsg": "OK",
+  "av": "5.6",
+  "tv": "1.4",
+  "sv": "100",
+  "xv": "0.0",
+  "WBMode": "auto",
+  "shootMode": "single",
+  "exposureMode": "M",
+  "stillSize": "L3",
+  "movieSize": "FHD30p",
+  "effect": "cim_natural",
+  "filter": "off",
+  "focusMode": "af",
+  "ssid": "PENTAX_XXXXXX",
+  "key": "XXXXXXXX",
+  "channel": "1"
+}
