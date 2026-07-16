@@ -1,0 +1,16 @@
+{"errCode": 200,
+ "errMsg": "OK",
+ "hot": false,
+ "battery": 100,
+ "storages" : [
+ {"name":"sd1",
+ "equipped": true,
+ "writable": true,
+ "available": true,
+ "active": true,
+ "format": "dng",
+ "remain": 3886
+, "dir": "112_1106",
+ "file": "IMGP0341.DNG"
+ }
+ ]}

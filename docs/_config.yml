@@ -1,0 +1,11 @@
+# GitHub Pages (Jekyll) config
+title: pyks2 | Pentax K-S2 WiFi API
+description: A complete reverse-engineering of the Pentax K-S2's WiFi HTTP API, with a Python library and CLI.
+
+remote_theme: just-the-docs/just-the-docs
+plugins:
+  - jekyll-remote-theme
+aux_links:
+  "View on GitHub":
+    - "https://github.com/PICKLERICK2005/pyks2"
+color_scheme: light

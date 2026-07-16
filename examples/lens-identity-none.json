@@ -1,0 +1,33 @@
+{
+  "label": "18-50",
+  "constants_lens": {
+    "errCode": 200,
+    "errMsg": "OK"
+  },
+  "params_lens": {
+    "errCode": 200,
+    "errMsg": "OK",
+    "focusMode": "af"
+  },
+  "status_lens": {
+    "errCode": 200,
+    "errMsg": "OK",
+    "focused": true,
+    "focusCenters": []
+  },
+  "variables_lens": {
+    "errCode": 200,
+    "errMsg": "OK",
+    "focused": true,
+    "focusCenters": [],
+    "focusMode": "af"
+  },
+  "props_lens": {
+    "errCode": 200,
+    "errMsg": "OK",
+    "focused": true,
+    "focusCenters": [],
+    "focusMode": "af"
+  },
+  "avList": []
+}
