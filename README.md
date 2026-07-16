@@ -194,8 +194,8 @@ body and sending the diffs is the most useful contribution you could make!
 
 The only remaining gaps in this project would be:
 
-1- The endpoint affiliated with the GPS module
-2- The Liveview Zoom endpoint
+> 1. The endpoint affiliated with the GPS module
+> 2. The Liveview Zoom endpoint
 
 Both of which likely require a corresponding hardware addon.
 
