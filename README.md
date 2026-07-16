@@ -13,9 +13,11 @@ project maps the **entire surface** of the K-S2's API against a physical camera,
 writes it up as a proper dissection, and ships a clean client that is lighter
 and more capable than the vendor's own Image Sync app.
 
+Visit the pages website [![here](https://picklerick2005.github.io/PyKS2/)].
+
 > **Two things make this more than "another camera library":**
-> 1. A full [protocol dissection](https://github.com/PICKLERICK2005/pyks2/blob/main/docs/PROTOCOL.md) and
->    [reverse-engineering methodology](https://github.com/PICKLERICK2005/pyks2/blob/main/docs/METHODOLOGY.md), every endpoint,
+> 1. A full [protocol dissection](https://picklerick2005.github.io/PyKS2/PROTOCOL.html) and
+>    [reverse-engineering methodology](https://picklerick2005.github.io/PyKS2/METHODOLOGY.html), every endpoint,
 >    every quirk, every hardware limitation, with the raw captures to prove it.
 > 2. A design that **beats the official app**: event-driven via the camera's
 >    WebSocket instead of the poll-storm Image Sync uses (~90% of its total
@@ -27,7 +29,7 @@ and more capable than the vendor's own Image Sync app.
 
 ```
 pyks2/          the library (camera-only HTTP client, typed models, WS events)
-  ├─ client.py       K_S2_WiFi — the API client
+  ├─ client.py       K_S2_WiFi, the API client
   ├─ models.py       typed response models (defensive parsing)
   ├─ events.py       /v1/changes WebSocket client (stdlib, zero-dep)
   ├─ constants.py    endpoints + capability enums
@@ -137,8 +139,8 @@ The heart of this project is the write-up. Highlights:
 - **How Image Sync actually works**, captured off the wire — and why this
   client's event-driven design is better.
 
-Start with **[docs/PROTOCOL.md](https://github.com/PICKLERICK2005/pyks2/blob/main/docs/PROTOCOL.md)**, then
-**[docs/METHODOLOGY.md](https://github.com/PICKLERICK2005/pyks2/blob/main/docs/METHODOLOGY.md)**. The raw evidence is in
+Start with **[docs/PROTOCOL.md](https://picklerick2005.github.io/PyKS2/PROTOCOL.html)**, then
+**[docs/METHODOLOGY.md](https://picklerick2005.github.io/PyKS2/METHODOLOGY.html)**. The raw evidence is in
 **[examples/](https://github.com/PICKLERICK2005/pyks2/tree/main/examples)** and the machine-readable spec is
 **[examples/API_REFERENCE.json](https://github.com/PICKLERICK2005/pyks2/blob/main/examples/API_REFERENCE.json)**.
 
@@ -162,7 +164,7 @@ findings (async capture, the Bulb correction, dynamic capability lists).
 
 Verified against a **Pentax K-S2, firmware 01.10**. Other Pentax bodies (K-1,
 KP, K-70, K-3…) share much of this API family but differ in specifics. Running
-the probing approach in [docs/METHODOLOGY.md](https://github.com/PICKLERICK2005/pyks2/blob/main/docs/METHODOLOGY.md) on another
+the probing approach in [docs/METHODOLOGY.md](https://picklerick2005.github.io/PyKS2/METHODOLOGY.html) on another
 body and sending the diffs is the most useful contribution you could make!
 
 ## License
