@@ -118,7 +118,7 @@ Everything the library does, from a terminal:
 
 ```bash
 pyks2 ping
-pyks2 info                          # model, firmware, battery, storage
+pyks2 info                          # model, firmware, battery (%), storage
 pyks2 shoot --af off --wait --download shot.dng
 pyks2 settings                      # show current settings
 pyks2 settings av=8.0 sv=400        # set them
@@ -128,6 +128,8 @@ pyks2 download 100_1507/IMGP1974.DNG --size view -o preview.jpg
 pyks2 liveview -o frame.jpg
 pyks2 watch --resolve               # stream camera events live
 ```
+
+> `pyks2 info` reports the K-S2 battery as an integer percentage. In practice the camera reports values like `100`, `66`, and `0`, plus a `hot` thermal state flag in `status/device`.
 
 ---
 
