@@ -3,6 +3,48 @@
 All notable changes to **pyks2** are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+Three additive features on top of 1.0.0. All are backward-compatible — no
+existing public API changed behaviour.
+
+### Added
+- **Live view context manager**: `with cam.liveview() as stream: for frame in
+  stream: ...` guarantees the underlying streaming Response (and therefore
+  the camera's mirror-up state) closes on `__exit__`, even if the caller
+  breaks out of the loop early or an exception propagates through it.
+  `liveview_stream()` and `iter_liveview_frames()` are unchanged and still
+  supported — the latter's cleanup still depends on the generator being
+  exhausted or garbage-collected, which is exactly the gap `liveview()`
+  closes. Hardware-verified (same transport as the existing liveview code).
+- **Typed exposure-value accessors**: `set_iso()`, `set_aperture()`,
+  `set_shutter_speed()`, `set_exposure_comp()`, and `set_wb()` accept native
+  Python types (`int`/`"auto"` for ISO, a `fractions.Fraction` of seconds for
+  shutter speed, signed floats for EV comp) and consult the camera's
+  list-emptiness writability signal (PROTOCOL.md §6.5) *before* writing.
+  Writing a camera-controlled value now **raises `KS2UnsupportedError`**
+  instead of silently no-opping. Added `CameraConstants.sv_writable` /
+  `.xv_writable`, mirroring the existing `tv_writable`/`av_writable`.
+  `set_camera_params(**kwargs)` remains the raw, unvalidated escape hatch.
+  Hardware-verified (writability semantics per PROTOCOL.md §6.5; value
+  encoding validated against captured examples).
+- **Async streaming (`pyks2[async]` extra)**: `cam.events_async()` returns an
+  `AsyncChangesClient` for `async for ev in cam.events_async(): ...` over
+  `/v1/changes`, and `cam.iter_liveview_frames_async()` gives an async live
+  view frame iterator. Both share their parsing with the sync path — MJPEG
+  framing via the new `MjpegFrameParser` (`pyks2._mjpeg`), event decoding via
+  `events._payload_to_event` — so there is no duplicated protocol logic
+  between sync and async. Requires the optional `httpx`/`websockets`
+  dependencies (`pip install pyks2[async]`); the base install stays
+  dependency-light, and `import pyks2` / `import pyks2.async_client` both
+  succeed with neither installed — only calling the async APIs raises a
+  clear `ImportError` pointing at the extra. **NOT yet verified against
+  physical hardware.** The sync `ChangesClient` handshake and
+  `MjpegFrameParser` framing this reuses ARE hardware-verified; what's
+  unverified is the async transport (httpx/websockets) driving them against
+  the real camera's WiFi. Treat as inferred-correct pending that
+  verification.
+
 ## [1.0.0] — 2026-07-16
 
 First stable release: an extensive, hardware-verified reverse-engineering of the
