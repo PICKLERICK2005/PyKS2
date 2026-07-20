@@ -31,7 +31,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "mypy>=1.0", "ruff>=0.4"]
+async = ["httpx>=0.24", "websockets>=11"]
+dev = ["pytest>=7", "mypy>=1.0", "ruff>=0.4", "pyks2[async]"]
 
 [project.scripts]
 pyks2 = "pyks2.cli:main"
