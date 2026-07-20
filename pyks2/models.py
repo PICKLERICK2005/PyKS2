@@ -166,6 +166,18 @@ class CameraConstants:
         list-emptiness signal as tv)."""
         return len(self.av_list) > 0
 
+    @property
+    def sv_writable(self) -> bool:
+        """Whether ISO (sv) is user-settable in the current mode (same
+        list-emptiness signal as tv/av)."""
+        return len(self.sv_list) > 0
+
+    @property
+    def xv_writable(self) -> bool:
+        """Whether exposure comp (xv) is user-settable in the current mode
+        (same list-emptiness signal as tv/av); observed empty only in Bulb."""
+        return len(self.xv_list) > 0
+
 
 @dataclass
 class LensState:
