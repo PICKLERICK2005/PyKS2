@@ -14,12 +14,14 @@ which is the reliable pattern for this camera's server.
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Dict, Iterator, List, Optional
+from fractions import Fraction
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional, Union
 from urllib.parse import quote
 
 import requests
 
 from . import constants as C
+from ._mjpeg import MjpegFrameParser
 from .errors import (
     KS2APIError,
     KS2Error,
@@ -36,6 +38,9 @@ from .models import (
     PhotoListing,
     ShootResult,
 )
+
+if TYPE_CHECKING:
+    from .async_client import AsyncChangesClient
 
 
 class K_S2_WiFi:
@@ -247,6 +252,112 @@ class K_S2_WiFi:
         data = self._request("PUT", C.EP.PARAMS_SUB.format(sub="camera"),
                              body=body)
         return CameraParams.from_dict(data)
+
+    # -- writes: typed accessors ---------------------------------------------
+    #
+    # set_camera_params() above is the raw escape hatch: it fires whatever
+    # keys/values you give it and does not know whether the current exposure
+    # mode actually lets the camera accept them. Per PROTOCOL.md §6.5, when a
+    # value's list (avList/tvList/svList/xvList) is empty in the current mode,
+    # the camera is in control of that value: a PUT still returns 200 but the
+    # value silently does not change. The accessors below consult that
+    # writability signal FIRST and raise KS2UnsupportedError instead of
+    # sending a write that would silently no-op.
+
+    def set_iso(self, value: Union[int, str], *,
+                constants: Optional[CameraConstants] = None) -> CameraParams:
+        """Typed ISO (sv) write. ``value`` is an int (e.g. 400) or the string
+        "auto" (ISO AUTO is a real camera value; PROTOCOL.md §6.5).
+
+        Raises:
+            KS2UnsupportedError: svList is empty in the current exposure mode
+                (ISO is camera-controlled there).
+        """
+        c = constants if constants is not None else self.get_camera_constants()
+        if not c.sv_writable:
+            raise KS2UnsupportedError(
+                400, "sv (ISO) is camera-controlled in the current exposure "
+                     "mode (svList is empty)",
+                C.EP.PARAMS_SUB.format(sub="camera"))
+        sv = ("auto" if isinstance(value, str) and value.strip().lower() == "auto"
+              else str(int(value)))
+        return self.set_camera_params(sv=sv)
+
+    def set_aperture(self, value: Union[float, str], *,
+                      constants: Optional[CameraConstants] = None) -> CameraParams:
+        """Typed aperture (av) write. ``value`` is a number (or numeric
+        string) matched against the live ``avList`` so the camera's exact
+        string encoding is used (it mixes forms like "8.0" and "10" for
+        different whole stops). A value not currently in ``avList`` is passed
+        through as a plain decimal and left to the camera's own validation.
+
+        Raises:
+            KS2UnsupportedError: avList is empty in the current exposure mode
+                (aperture is camera-controlled there).
+        """
+        c = constants if constants is not None else self.get_camera_constants()
+        if not c.av_writable:
+            raise KS2UnsupportedError(
+                400, "av (aperture) is camera-controlled in the current "
+                     "exposure mode (avList is empty)",
+                C.EP.PARAMS_SUB.format(sub="camera"))
+        av = _match_numeric_option(value, c.av_list)
+        return self.set_camera_params(av=av)
+
+    def set_shutter_speed(self, value: Union[Fraction, float, int], *,
+                           constants: Optional[CameraConstants] = None) -> CameraParams:
+        """Typed shutter-speed (tv) write. ``value`` is a ``fractions.Fraction``
+        of seconds (e.g. ``Fraction(1, 100)`` for 1/100s, ``Fraction(30, 1)``
+        for 30s), or a plain int/float number of seconds converted via
+        ``Fraction(value).limit_denominator(10000)``. The camera encodes tv as
+        "numerator.denominator" seconds (PROTOCOL.md §4/§6.5), which this maps
+        to directly.
+
+        Raises:
+            KS2UnsupportedError: tvList is empty in the current exposure mode
+                (shutter speed is camera-controlled there).
+        """
+        c = constants if constants is not None else self.get_camera_constants()
+        if not c.tv_writable:
+            raise KS2UnsupportedError(
+                400, "tv (shutter speed) is camera-controlled in the "
+                     "current exposure mode (tvList is empty)",
+                C.EP.PARAMS_SUB.format(sub="camera"))
+        frac = value if isinstance(value, Fraction) else Fraction(value).limit_denominator(10000)
+        tv = f"{frac.numerator}.{frac.denominator}"
+        return self.set_camera_params(tv=tv)
+
+    def set_exposure_comp(self, value: float, *,
+                           constants: Optional[CameraConstants] = None) -> CameraParams:
+        """Typed exposure-compensation (xv) write. ``value`` is a signed EV
+        float (e.g. -0.7, 0, +1.3), formatted to the camera's "+0.7"/"-0.3"/
+        "0.0" style (PROTOCOL.md §6.5).
+
+        Raises:
+            KS2UnsupportedError: xvList is empty in the current exposure mode
+                (exposure comp is camera-controlled there; observed only in
+                Bulb mode).
+        """
+        c = constants if constants is not None else self.get_camera_constants()
+        if not c.xv_writable:
+            raise KS2UnsupportedError(
+                400, "xv (exposure compensation) is camera-controlled in "
+                     "the current exposure mode (xvList is empty)",
+                C.EP.PARAMS_SUB.format(sub="camera"))
+        value = float(value)
+        xv = "0.0" if value == 0 else f"{value:+.1f}"
+        return self.set_camera_params(xv=xv)
+
+    def set_wb(self, mode: str) -> CameraParams:
+        """Typed white-balance write. ``mode`` is one of
+        ``CameraConstants.wb_mode_list`` (e.g. "auto", "daylight", "cte").
+
+        Unlike av/tv/sv/xv, ``WBModeList`` (constants/camera) is static
+        rather than varying per exposure mode, so there is no observed
+        camera-controlled state to guard against here — this is a thin typed
+        wrapper, not a writability gate.
+        """
+        return self.set_camera_params(WBMode=mode)
 
     def set_lens_params(self, **kwargs: Any) -> None:
         """Attempt to write lens params. focusMode is read-only (physical
@@ -590,28 +701,41 @@ class K_S2_WiFi:
 
         Parses the multipart/x-mixed-replace boundary and yields each complete
         JPEG (SOI..EOI). Runs until the stream ends or ``max_frames`` reached.
+
+        This generator only closes the underlying Response (dropping the
+        camera's mirror) in its ``finally`` block, which only runs once the
+        generator is exhausted or garbage-collected — if a caller ``break``s
+        out of the loop and holds onto the generator, the mirror can stay up
+        until GC. Prefer ``liveview()`` (a context manager) when you need a
+        deterministic close. Kept as-is for back-compat.
         """
         resp = self.liveview_stream()
-        buf = b""
+        parser = MjpegFrameParser()
         count = 0
         try:
             for chunk in resp.iter_content(8192):
-                if not chunk:
-                    continue
-                buf += chunk
-                while True:
-                    soi = buf.find(b"\xff\xd8")
-                    eoi = buf.find(b"\xff\xd9", soi + 2) if soi >= 0 else -1
-                    if soi >= 0 and eoi > soi:
-                        yield buf[soi:eoi + 2]
-                        buf = buf[eoi + 2:]
-                        count += 1
-                        if max_frames and count >= max_frames:
-                            return
-                    else:
-                        break
+                for frame in parser.feed(chunk):
+                    yield frame
+                    count += 1
+                    if max_frames and count >= max_frames:
+                        return
         finally:
             resp.close()
+
+    def liveview(self, max_frames: Optional[int] = None) -> "LiveviewSession":
+        """Context-managed live view: guarantees the mirror drops on exit.
+
+        Usage:
+            >>> with cam.liveview() as stream:
+            ...     for frame in stream:
+            ...         ...   # a `break` here still closes on __exit__
+
+        Unlike ``iter_liveview_frames()``, whose cleanup depends on the
+        generator being exhausted or garbage-collected, the underlying
+        Response is closed deterministically when the ``with`` block exits —
+        including on an early ``break`` or an exception in the loop body.
+        """
+        return LiveviewSession(self, max_frames=max_frames)
 
     # -- events -------------------------------------------------------------
 
@@ -624,6 +748,89 @@ class K_S2_WiFi:
         """
         from .events import ChangesClient
         return ChangesClient(self.ip, **kwargs)
+
+    def events_async(self, **kwargs) -> "AsyncChangesClient":
+        """Return an AsyncChangesClient for the /v1/changes WebSocket (async).
+
+        Requires the optional ``websockets`` dependency:
+        ``pip install pyks2[async]``. NOT yet verified against physical
+        hardware (inferred from the sync ``ChangesClient``'s verified
+        handshake/event behaviour) — see CHANGELOG.
+
+        Usage:
+            >>> async with cam.events_async() as ev:
+            ...     async for change in ev:
+            ...         if change.is_storage: ...
+        """
+        from .async_client import AsyncChangesClient
+        return AsyncChangesClient(self.ip, **kwargs)
+
+    def iter_liveview_frames_async(self, max_frames: Optional[int] = None):
+        """Async counterpart to ``iter_liveview_frames()``. Requires the
+        optional ``httpx`` dependency: ``pip install pyks2[async]``.
+
+        Shares the same ``MjpegFrameParser`` boundary-scanning logic as the
+        sync path — only the transport (httpx instead of requests) differs.
+        NOT yet verified against physical hardware — see CHANGELOG.
+
+        Usage:
+            >>> async for frame in cam.iter_liveview_frames_async():
+            ...     ...
+        """
+        from .async_client import iter_liveview_frames_async as _f
+        return _f(self.ip, max_frames=max_frames)
+
+
+class LiveviewSession:
+    """Context-managed live view session returned by ``K_S2_WiFi.liveview()``.
+
+    Guarantees the underlying streaming Response (and therefore the camera's
+    mirror-up state) is closed on ``__exit__``, regardless of whether the
+    frame loop runs to completion, breaks early, or raises.
+    """
+
+    def __init__(self, client: "K_S2_WiFi", max_frames: Optional[int] = None):
+        self._client = client
+        self._max_frames = max_frames
+        self._resp: Optional["requests.Response"] = None
+
+    def __enter__(self) -> "LiveviewSession":
+        self._resp = self._client.liveview_stream()
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        if self._resp is not None:
+            self._resp.close()
+            self._resp = None
+
+    def __iter__(self) -> Iterator[bytes]:
+        if self._resp is None:
+            raise RuntimeError(
+                "liveview() must be used as a context manager: "
+                "`with cam.liveview() as stream: ...`")
+        parser = MjpegFrameParser()
+        count = 0
+        for chunk in self._resp.iter_content(8192):
+            for frame in parser.feed(chunk):
+                yield frame
+                count += 1
+                if self._max_frames and count >= self._max_frames:
+                    return
+
+
+def _match_numeric_option(value: Union[float, str], options: List[str]) -> str:
+    """Find the camera's exact string encoding for a numeric value within a
+    live capability list (e.g. avList mixes "8.0" and "10" for whole stops).
+    Falls back to a plain one-decimal format if no match is found — an
+    out-of-range value is still rejected by the camera's own validation."""
+    target = float(value)
+    for opt in options:
+        try:
+            if abs(float(opt) - target) < 1e-9:
+                return opt
+        except (TypeError, ValueError):
+            continue
+    return f"{target:.1f}"
 
 
 def _quiet_remove(path: str) -> None:
