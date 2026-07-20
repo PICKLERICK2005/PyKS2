@@ -42,7 +42,7 @@ from .models import (
     ShootResult,
 )
 
-__version__ = "1.0.0"
+__version__ = "1.1.0b1"
 __author__ = "Jamal El Siblany (pickle)"
 __email__ = "jamalsiblani@gmail.com"
 __url__ = "https://github.com/PICKLERICK2005/pyks2"
