@@ -8,7 +8,7 @@ A Python library and CLI for controlling the **Pentax K-S2** over its
 built-in WiFi, built on an extensive, hardware-verified reverse-engineering of
 the camera's undocumented HTTP API. (A web GUI is planned; see below.)
 
-<img width="250" height="128" alt="image" src="https://github.com/user-attachments/assets/d947b6b5-77f6-4309-9b3d-5002587b1f6f" /> <img width="320" height="240" alt="image" src="https://github.com/user-attachments/assets/a3547941-ffd5-4b3e-9cc5-1f7158cdf0c4" />
+<img width="250" height="128" alt="image" src="https://github.com/user-attachments/assets/d947b6b5-77f6-4309-9b3d-5002587b1f6f" />
 
 
 
