@@ -3,7 +3,7 @@
 All notable changes to **pyks2** are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.1.0b1] — 2026-07-21
 
 Three additive features on top of 1.0.0. All are backward-compatible — no
 existing public API changed behaviour.
