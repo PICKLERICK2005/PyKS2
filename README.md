@@ -70,7 +70,7 @@ examples/       real captured JSON responses + the machine-readable API referenc
 ## Quick start
 
 ```bash
-pip install pyks2            # or: pip install -e .  from a clone
+pip install pyks2==1.1.0b1            # or: pip install -e .  from a clone
 ```
 
 Join the camera's WiFi (`PENTAX_XXXXXX`), then:
