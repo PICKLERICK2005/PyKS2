@@ -9,7 +9,7 @@ built-in WiFi, built on an extensive, hardware-verified reverse-engineering of
 the camera's undocumented HTTP API. (A web GUI is planned; see below.)
 
 
-    <img width="250" height="128" alt="image" src="https://github.com/user-attachments/assets/d947b6b5-77f6-4309-9b3d-5002587b1f6f" />
+<img width="250" height="128" alt="image" src="https://github.com/user-attachments/assets/d947b6b5-77f6-4309-9b3d-5002587b1f6f" />
 
 
 The K-S2 has a WiFi remote-control API, but Pentax never documented it. This
