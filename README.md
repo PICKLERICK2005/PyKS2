@@ -1,5 +1,6 @@
 # PyKS2
 
+[![PyPI](https://img.shields.io/pypi/v/pyks2)](https://pypi.org/project/pyks2/)
 [![tests](https://github.com/PICKLERICK2005/pyks2/actions/workflows/test.yml/badge.svg)](https://github.com/PICKLERICK2005/pyks2/actions/workflows/test.yml)
 [![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-MIT-green)](https://github.com/PICKLERICK2005/pyks2/blob/main/LICENSE)
