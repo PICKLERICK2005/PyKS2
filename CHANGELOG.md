@@ -3,6 +3,83 @@
 All notable changes to **pyks2** are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.0rc1] — 2026-07-29
+
+Feature-complete for the 1.2 line, and the simulator's public API is frozen
+pending final downstream validation. Everything here is measured: this was the
+last session with the physical camera, so the read surface was swept
+exhaustively and every remaining hardware-dependent response captured.
+
+### Added
+- **The whole client surface now works against the simulator.** Nine public
+  calls previously failed. Bulb (`/v1/camera/shoot/start` + `/finish`) was not
+  implemented at all; `/v1/lens/focus` was registered GET-only while the client
+  POSTs to it; and ten group reads (the bare `/v1/constants`, `/v1/params`,
+  `/v1/variables`, `/v1/status` roots plus `constants/lens`,
+  `constants/liveview`, `params/liveview`, `variables/lens`,
+  `variables/liveview`, `variables/device`) existed in `examples/` but had never
+  been copied into package data. A new test iterates the client's entire
+  camera-facing surface and asserts nothing fails unexpectedly, rather than
+  trusting a hand-written list.
+- **A public configuration API**, replacing the documented advice to poke
+  `sim._variables`:
+  `set_exposure_mode()`, `set_focus_mode()`, `set_camera_controlled()`,
+  `set_user_controlled()`, `writable()`, `seed_photos()`, `add_photo()`.
+  `set_exposure_mode()` accepts only `"M"` and `"B"` — the two dial positions
+  with a real captured capability set — because lists differ per mode and
+  inventing them would make the writability signal fiction.
+- **Fault injection.** `fail(path, error, times=)` returns a real captured error
+  body; `drop(path)`, `delay(path, seconds)` and `drop_stream_after(frames)`
+  reproduce transport misbehaviour; `clear_faults()` resets. `ERROR_BODIES`
+  advertises only errors that were actually captured — `"precondition"` (412),
+  `"bad_request"` (400), `"not_found"` (404), `"unhandled_method"` (a real HTTP
+  400 with an HTML body). There is deliberately **no card-full**: that response
+  was never captured and the simulator does not invent wire data.
+- Bulb is modelled properly: `shoot/start` and `shoot/finish` are gated on the
+  dial being on `B`, a plain `shoot` on `B` returns 412, and a completed bulb
+  exposure writes a file and fires one `storage` event.
+
+### Fixed
+- **Live view serves one stream at a time.** Measured over two trials: opening a
+  second stream delivers one more frame to the first and then closes it, and the
+  first never recovers — the newest requester wins. The simulator served both
+  independently, which it no longer does. (An earlier note in this project
+  claiming the camera "permits concurrency" was based on a flawed test that only
+  read the second stream's headers.)
+- **In MF, `shoot af=auto` returns 412** — a hard refusal, not a silent no-op,
+  and no file is written. `POST /v1/lens/focus` fails in MF too, and writing
+  `focusMode` over WiFi returns 400 with the value unchanged. All measured.
+- `?limit=abc` is **ignored** and returns the full listing; the simulator was
+  answering errCode 400. An unrecognised `PUT` key is accepted and ignored;
+  the simulator was adding it to the params and firing a spurious `camera` event.
+- Replaced the deprecated `asyncio.get_event_loop()` and kept a strong reference
+  to the background capture task, which asyncio only holds weakly. The suite now
+  runs under `-W error::DeprecationWarning`.
+
+### Changed
+- **Python 3.9 is dropped**; `requires-python` is now `>=3.10`. It was already
+  untenable: current `starlette` and `uvicorn` both require 3.10, so
+  `pip install pyks2[testing]` on 3.9 either failed to resolve or silently
+  backslid to versions this code has never been tested against. The ruff target
+  and the classifiers move with it.
+- **CI runs on `develop`** as well as `main`, across 3.10–3.13 on Linux plus a
+  Windows leg, and runs lint. Every simulator change before this had been
+  verified on a single machine.
+- `.gitattributes` normalises source line endings while keeping the captured
+  fixtures byte-exact, verified with `git check-attr`.
+
+### Captured this session
+Bulb start/finish bodies and the genuine Bulb-mode empty-list state; the MF lens
+state and its refusals; `POST /v1/lens/focus` succeeding; the ten missing group
+reads; and an exhaustive 32-endpoint read sweep built from `pyks2.constants`
+itself, all of which returned 200. A 2 s bulb exposure reported
+`tv: "198.100"` — 1.98 s — independently corroborating the `tv` encoding.
+Identifying fields (`ssid`, `key`, `macAddress`, `serialNo`) are redacted to the
+repo's existing placeholders, and `PROVENANCE.md` labels those fixtures redacted
+rather than raw. It also records what was observed but deliberately **not**
+modelled: `camera` event delivery was intermittent (2 of 5 attempts), so the
+simulator emits reliably and callers are told not to depend on it.
+
 ## [1.2.0b2] — 2026-07-29
 
 The simulator, measured against the camera instead of written from the notes.

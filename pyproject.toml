@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyks2"
-version = "1.2.0b2"
+version = "1.2.0rc1"
 description = "A Python client and CLI for the Pentax K-S2's undocumented WiFi HTTP API, plus a reverse-engineering write-up. (Web GUI planned.)"
 readme = "README.md"
 requires-python = ">=3.10"
