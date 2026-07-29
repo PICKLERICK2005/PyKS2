@@ -2,7 +2,8 @@
 
 Uses fake stand-ins for `websockets`/`httpx` (mirroring conftest's fake
 `requests`) so these run hermetically, with no real network and no physical
-camera. NOT hardware-verified — see CHANGELOG.
+camera. The behaviour these fakes stand in for is itself hardware-verified
+against a physical K-S2 — see docs/VERIFICATION.md.
 
 Tests call asyncio.run() directly rather than depending on a pytest-asyncio
 style plugin, so no extra test-runner dependency is needed.

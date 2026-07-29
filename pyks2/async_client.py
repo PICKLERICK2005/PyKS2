@@ -7,11 +7,10 @@ dependencies until a class/function here is actually constructed or called —
 so ``import pyks2`` (and even ``import pyks2.async_client``) stays clean with
 neither dependency installed, and the base install stays dependency-light.
 
-NOT yet verified against physical hardware. The sync ``ChangesClient``
-handshake and ``MjpegFrameParser`` framing this reuses ARE hardware-verified;
-what's untested here is the async transport layer (websockets/httpx) driving
-them against the real camera. Treat this module as inferred-correct pending
-that verification.
+Hardware-verified against a physical K-S2 (firmware 01.10) on 2026-07-29: the
+async event stream delivers the same ``/v1/changes`` payloads as the sync path
+for a capture, and the async live view yields real 720x480 JPEGs while raising
+the mirror on start and dropping it on close. See docs/VERIFICATION.md.
 """
 
 from __future__ import annotations
