@@ -1,0 +1,14 @@
+# Captured camera responses are byte-exact evidence, not source code.
+#
+# The simulator serves these verbatim and the tests assert their exact bytes and
+# lengths, so line endings must never be rewritten. Without this, cloning on
+# Windows (core.autocrlf=true) rewrites every LF as CRLF: the /v1/changes payload
+# becomes 54 bytes instead of the camera's 53, photos-listing.json gains 29
+# stray CRs, and the simulator stops being byte-faithful. CI runs on Linux, so
+# nothing would have caught it there.
+pyks2/testing/data/** -text
+examples/** -text
+
+# Binary captures: no conversion, and no attempt to diff them as text.
+*.bin binary
+*.jpg binary
