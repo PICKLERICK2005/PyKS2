@@ -1,0 +1,24 @@
+{"errCode": 200,
+ "errMsg": "OK",
+ "model": "PENTAX K-S2",
+ "firmwareVersion": "01.10",
+ "macAddress": "00:11:22:33:44:55",
+ "serialNo": "0000000",
+ "channelList": [0,1,2,3,4,5,6,7,8,9,10,11],
+ "hot": false,
+ "battery": 100,
+ "storages" : [
+ {"name":"sd1",
+ "equipped": true,
+ "writable": true,
+ "available": true,
+ "active": true,
+ "format": "dng",
+ "remain": 3886
+, "dir": "112_1106",
+ "file": "IMGP0341.DNG"
+ }
+ ],
+ "ssid": "PENTAX_XXXXXX",
+ "key": "XXXXXXXX",
+ "channel": "1"}
