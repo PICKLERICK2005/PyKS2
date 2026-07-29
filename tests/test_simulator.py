@@ -29,9 +29,11 @@ pytest.importorskip("httpx")
 from pyks2.testing import CameraSimulator, SimulatorServer  # noqa: E402
 from pyks2.testing.simulator import (  # noqa: E402
     CAMERA_HEADERS,
+    ENDPOINTS,
     FAST,
     Timing,
     fixture_bytes,
+    paths,
 )
 
 
@@ -700,10 +702,18 @@ def test_set_exposure_mode_loads_the_real_bulb_capture(server):
 
 def test_set_exposure_mode_refuses_modes_with_no_capture(server):
     """Faithfulness guard: inventing a dial position would make the writability
-    signal fiction, so only captured modes are accepted."""
+    signal fiction, so only captured modes are accepted.
+
+    The message text is pinned deliberately — the guard's job is not just to
+    block but to point at the tool that does what the caller wanted.
+    """
     with pytest.raises(ValueError) as e:
         server.simulator.set_exposure_mode("TAV")
-    assert "captured modes" in str(e.value)
+    msg = str(e.value)
+    assert "'TAV' has no captured capability set" in msg
+    assert "set_camera_controlled()" in msg
+    assert "set_user_controlled()" in msg
+    assert "['B', 'M']" in msg, "should name the modes that do work"
 
 
 def test_bulb_sequence_writes_a_file_and_fires_one_event(server):
@@ -764,6 +774,104 @@ def test_seed_photos_replaces_the_card(server):
     assert cam.latest_info().captured is False, "seeding resets the session"
     sim.add_photo("101_0102", "IMGP0004.DNG")
     assert len(list(cam.list_photos())) == 4
+
+
+# --- the symbolic endpoint constants ---------------------------------------
+
+def test_endpoint_constants_cover_the_whole_route_table():
+    """The anti-drift guarantee, checked against the real route table rather
+    than a hand-written list."""
+    from pyks2.testing.simulator import _UNFAULTABLE, create_app
+    app = create_app(CameraSimulator(timing=FAST))
+    routed = {r.path for r in app.app.routes}
+    faultable = routed - set(_UNFAULTABLE)
+    assert faultable == set(ENDPOINTS.values()), (
+        f"unnamed routes: {sorted(faultable - set(ENDPOINTS.values()))}; "
+        f"stale constants: {sorted(set(ENDPOINTS.values()) - faultable)}")
+    assert set(_UNFAULTABLE) == {"/v1/changes", "/{path:path}"}
+
+
+def test_drift_guard_fires_when_a_route_has_no_constant(monkeypatch):
+    """Prove the guard actually bites, rather than trusting that it would."""
+    import pyks2.testing.simulator as mod
+    shrunk = dict(ENDPOINTS)
+    shrunk.pop("PING")
+    monkeypatch.setattr(mod, "ENDPOINTS", shrunk)
+    with pytest.raises(RuntimeError) as e:
+        mod.create_app(CameraSimulator(timing=FAST))
+    assert "drifted" in str(e.value)
+    assert "/v1/ping" in str(e.value)
+
+
+def test_constants_match_the_paths_they_name():
+    assert paths.SHOOT == "/v1/camera/shoot"
+    assert paths.SHOOT_START == "/v1/camera/shoot/start"
+    assert paths.SHOOT_FINISH == "/v1/camera/shoot/finish"
+    assert paths.LENS_FOCUS == "/v1/lens/focus"
+    assert paths.LIVEVIEW_ZOOM == "/v1/liveview/zoom"
+    assert set(paths.all()) == set(ENDPOINTS.values())
+    assert set(paths.names()) == set(ENDPOINTS)
+    assert "/v1/changes" not in paths.all(), "the WebSocket is not fault-able"
+
+
+def test_faults_accept_a_constant_and_a_raw_path(server):
+    """Constants are the documented form; raw strings keep working."""
+    cam, sim = server.client(), server.simulator
+    sim.fail(paths.SHOOT)
+    with pytest.raises(KS2APIError) as e:
+        cam.shoot(af="off")
+    assert e.value.err_code == 412
+
+    sim.fail("/v1/camera/shoot")            # back-compat
+    with pytest.raises(KS2APIError) as e:
+        cam.shoot(af="off")
+    assert e.value.err_code == 412
+
+
+def test_templated_constant_matches_any_photo(server):
+    """paths.PHOTO_FILE covers every download; a concrete path covers one."""
+    cam, sim = server.client(), server.simulator
+    entries = [e.path for e in cam.list_photos()]
+    first, second = entries[0], entries[1]
+    out = os.path.join(tempfile.mkdtemp(), "x.jpg")
+
+    sim.fail(paths.PHOTO_FILE, "not_found", times=None)
+    for path in (first, second):
+        with pytest.raises(KS2APIError) as e:
+            cam.download(path, out, size="view")
+        assert e.value.err_code == 404
+    sim.clear_faults()
+
+    sim.fail(f"/v1/photos/{first}", "not_found", times=None)
+    with pytest.raises(KS2APIError):
+        cam.download(first, out, size="view")
+    assert cam.download(second, out, size="view") > 1000, "only one photo"
+
+
+def test_every_constant_is_actually_fault_able(server):
+    """Parametrised over the whole surface: injecting on each constant must
+    change what that endpoint returns, so no constant is decorative."""
+    cam, sim = server.client(), server.simulator
+    unaffected = []
+    for name, path in ENDPOINTS.items():
+        sim.clear_faults()
+        sim.fail(path, "not_found", times=None)
+        probe = path
+        if "{" in path:
+            probe = "/v1/photos/100_1507/IMGP1971.DNG" + (
+                "/info" if path.endswith("/info") else "")
+        try:
+            data = cam._request("GET", probe)
+        except KS2APIError as e:
+            if e.err_code != 404:
+                unaffected.append(f"{name}: errCode {e.err_code}")
+        except Exception as e:  # noqa: BLE001
+            unaffected.append(f"{name}: {type(e).__name__}")
+        else:
+            unaffected.append(f"{name}: fault ignored, got {list(data)[:3]}")
+    sim.clear_faults()
+    assert not unaffected, "these constants did not take a fault:\n  " + \
+        "\n  ".join(unaffected)
 
 
 # --- fault injection -------------------------------------------------------
@@ -828,9 +936,23 @@ def test_fail_forever_until_cleared(server):
 
 def test_fail_rejects_uninvented_errors(server):
     """Only captured error bodies are on offer — notably there is no card-full,
-    because that response was never captured."""
+    because that response was never captured.
+
+    The message text is pinned so the redirection to the near-full *state*
+    survives refactoring.
+    """
+    sim = server.simulator
+    for alias in ("card_full", "cardfull", "card-full"):
+        with pytest.raises(ValueError) as e:
+            sim.fail(paths.PROPS, alias)
+        msg = str(e.value)
+        assert "never captured on hardware" in msg, alias
+        assert "status-device-cardfull.json" in msg, alias
+        assert "remain: 1" in msg, alias
+
+    # anything else still gets the generic listing
     with pytest.raises(ValueError) as e:
-        server.simulator.fail("/v1/props", "card_full")
+        sim.fail(paths.PROPS, "teapot")
     assert "captured errors" in str(e.value)
 
 
@@ -887,6 +1009,38 @@ def test_a_second_live_view_stream_displaces_the_first(server):
 
 
 # --- the pytest fixture we ship -------------------------------------------
+
+def test_fixture_exposes_the_control_object(ks2_simulator):
+    """A fixture consumer must be able to reach the config and fault API, not
+    just the URL — otherwise the fixture can point a client at the simulator but
+    not make it misbehave, which is most of the value.
+    """
+    sim = ks2_simulator.simulator
+    cam = ks2_simulator.client()
+
+    # config through the fixture
+    sim.set_focus_mode("mf")
+    assert cam.get_focus_mode() == "mf"
+    sim.set_focus_mode("af")
+
+    # a fault through the fixture, keyed by constant
+    sim.fail(paths.SHOOT)
+    with pytest.raises(KS2APIError) as e:
+        cam.shoot(af="off")
+    assert e.value.err_code == 412
+    assert cam.shoot(af="off").focused is True
+
+    # and the addressing a consumer needs
+    assert ks2_simulator.base_url.startswith("http://127.0.0.1:")
+    assert ks2_simulator.host_port.endswith(str(ks2_simulator.port))
+
+
+def test_realistic_fixture_also_exposes_control(ks2_simulator_realistic):
+    sim = ks2_simulator_realistic.simulator
+    assert sim.writable("sv") is True
+    sim.set_camera_controlled("sv")
+    assert sim.writable("sv") is False
+
 
 def test_shipped_pytest_fixture_works(ks2_simulator):
     """``ks2_simulator`` comes from our pytest11 entry point, so downstream
