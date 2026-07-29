@@ -6,6 +6,91 @@ pass/fail verdict per path. Anything not listed here is not claimed as verified.
 
 ---
 
+## 2026-07-29 — simulator fidelity (`pyks2.testing`)
+
+The shipped simulator claims to behave like the camera, so it was measured
+against one: the same raw-socket probe was run against the physical body and
+against the simulator, and the results diffed.
+
+### Rig
+
+Pentax K-S2, firmware `01.10`, serial `4477116`, over AP `PENTAX_6C5AA9`
+(RSSI −39 dBm, battery 33%). Probe recorded verbatim status lines, headers,
+bodies and timings; one shutter actuation was used (`IMGP2331.DNG`).
+
+### Result
+
+**40 of 40 checks match**, covering wire behaviour (error codes, gating, listing
+shape, PUT shape, MJPEG framing, WebSocket frame bytes) and latency (medians
+within tolerance). Three deviations are deliberate and documented in
+`../pyks2/testing/data/PROVENANCE.md`: header casing/order, chunked
+transfer-encoding on the MJPEG stream, and the synthetic `?size=full` payload.
+None is observable through an HTTP client.
+
+### Measured latency, now modelled by `Timing`
+
+| Operation | Real camera | Simulator |
+|---|---|---|
+| `GET /v1/ping` | 60 ms | modelled |
+| `GET /v1/props` | 103 ms median (76–186) | 125 ms |
+| `GET /v1/props/{sub}` etc. | ~70 ms | modelled |
+| `GET /v1/photos` (358 files) | 1485 ms | 1514 ms |
+| `GET /v1/photos?limit=2` | 165 ms | 124 ms |
+| `PUT /v1/params/camera` | 160 ms | 188 ms |
+| `POST /v1/camera/shoot` | 191 ms | 216 ms |
+| `GET ...?size=view` (53 KB) | 268 ms | 283 ms |
+| shoot → `storage` event | 1933 ms (3.4 s seen earlier) | 1966 ms |
+| live view first frame | 834 ms (mirror flip-up) | 843 ms |
+| live view frame interval | 103 ms median (44–201), ~7.6 fps | 109 ms |
+
+`/v1/photos` scales with the number of files *returned* — ~110 ms + ~3.9 ms per
+file — which is the whole reason `?limit` exists.
+
+### Corrections to earlier claims
+
+- **`/v1/liveview/zoom` is not body-dependent.** PROTOCOL.md §9 said an empty
+  body returned `200`. With no stream running, all of no body, an empty body and
+  `zoom=1` returned `412`; with a stream running, all three returned `200`. The
+  gate is purely whether live view is streaming. §9 corrected.
+- **`/v1/photos/latest/info` does not always report `captured: true`.** After a
+  power cycle with 358 files on the card it returned
+  `{"errCode": 200, "errMsg": "OK", "captured": false}` with no `dir`/`file`.
+  "Latest" tracks the current power session, not the card. `latest_info()` and
+  `wait_for_capture()` docstrings corrected.
+
+### Behaviours newly pinned down
+
+- A `PUT /v1/params/camera` echoes a **`variables`-shaped** body: `avList`,
+  `tvList`, `svList`, `xvList`, `exposureModeOption` and `state` on top of the
+  values a `GET` returns.
+- `?limit=N` keeps **every** directory in the response, giving those past the
+  limit an empty `files` list; `limit=0` means *no limit*. (A limit of exactly
+  one less than the total returned everything — 357 of 358 gave 358 — which looks
+  like a firmware off-by-one and is not reproduced.)
+- A missing photo is `errCode 404`; an unknown path is `errCode 400`, both under
+  HTTP 200. An unhandled **method** is the one break from Law 1: a real HTTP
+  `400` with an HTML body.
+- The `/v1/changes` payload ends with a **newline** — the storage frame is 53
+  bytes on the wire, unmasked opcode 1.
+- Every response carries `Server: server`, `Cache-Control: no-cache, no-store,
+  max-age=0, must-revalidate`, `Pragma: no-cache`, `Expires: 0`, `Max-Age: 0`,
+  `Accept-Ranges: bytes`, and **no `Date`**.
+- The card holds a RAW+JPEG pair sharing shot number 2224, and the camera lists
+  `IMGP2224.JPG` before `IMGP2224.DNG` — so listing order is ascending shot
+  number, not sorted filenames.
+
+### Bug this pass found in pyks2 itself
+
+`capture()` reads its baseline from `latest_info()`, and when that is empty it
+passes `since=None`, which makes `wait_for_capture()` re-read the baseline
+*after* the shutter has fired. That is safe against the real camera only because
+the file takes ~2 s to appear. An early simulator build created the file
+instantly and `capture()` hung, adopting the new file as its own baseline. The
+simulator now defers the file (and the event) exactly as the camera does, with a
+floor that never collapses to zero even when latency is switched off.
+
+---
+
 ## 2026-07-29 — async streaming path (`pyks2[async]`)
 
 Closes the one gap left open by 1.1.0b1: the async transport layer
