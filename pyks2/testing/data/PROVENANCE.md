@@ -76,11 +76,65 @@ Three deliberate deviations, none observable through an HTTP client:
 ## Exercising the camera-controlled path
 
 `params-camera.json` and `variables-camera.json` were captured in `M` mode with
-all four `*List`s non-empty, so by default every exposure value is writable. To
-test the camera-controlled path (empty list → PUT returns 200 and is silently
-ignored), empty a list on the instance:
+all four `*List`s non-empty, so by default every exposure value is writable. Use
+the public configuration API:
 
 ```python
-sim = CameraSimulator()
-sim._variables["svList"] = []      # ISO now camera-controlled
+sim.set_camera_controlled("sv")    # ISO now camera-controlled
+sim.set_user_controlled("sv")      # back to the captured list
+sim.set_exposure_mode("B")         # the real Bulb capture: tvList/xvList empty
 ```
+
+Earlier releases documented poking `sim._variables` directly. That is retired —
+`set_camera_controlled()` and friends are supported API.
+
+`set_exposure_mode()` deliberately accepts only `"M"` and `"B"`, the two dial
+positions with a captured capability set. Capability lists differ per mode, so
+accepting an arbitrary mode would mean inventing them and turning the
+writability signal into fiction.
+
+## Modes and states captured on 2026-07-29
+
+| File | Physical state |
+|---|---|
+| `params-camera.json`, `variables-camera.json` | dial on `M`, all four lists populated |
+| `params-camera-bulb.json`, `variables-camera-bulb.json` | dial on **`B`**: `tvList` and `xvList` **empty** — the camera owns shutter and exposure compensation in Bulb |
+| `camera-shoot-start-bulb.json`, `camera-shoot-finish-bulb.json` | a real 2 s bulb exposure on `B`; the resulting frame reported `tv: "198.100"` (1.98 s) |
+| `params-lens.json`, `variables-lens.json` | AF/MF switch on **AF** |
+| `params-lens-mf.json`, `variables-lens-mf.json`, `status-lens-mf.json` | AF/MF switch on **MF** |
+| `lens-focus-response.json` | `POST /v1/lens/focus` succeeding in AF |
+
+One error body serves several scenarios because the camera really does send the
+same bytes for all of them — verified by hash. `error-412-precondition.json` is
+the response to: `/v1/liveview/zoom` with no stream, `shoot/start` or
+`shoot/finish` off `B`, a plain `shoot` on `B`, `shoot af=auto` in MF, and a
+`shoot` while live view is streaming. `error-400-bad-request.json` likewise
+covers an illegal parameter value and the refusal to write `focusMode`.
+
+## Redacted, not raw
+
+`macAddress`, `serialNo`, `ssid` and `key` are replaced with the repo's
+placeholders (`00:11:22:33:44:55`, `0000000`, `PENTAX_XXXXXX`, `XXXXXXXX`) in
+every fixture that carries them — `props.json`, `props-device.json`,
+`constants-device.json`, `params-device.json`, `variables-device.json`,
+`constants.json`, `params.json`, `variables.json`. Those files are therefore
+**redacted, not raw**: byte-exact apart from those four values. Shipping a real
+camera's WiFi key in a package on PyPI is not acceptable, and the placeholders
+match what `examples/` has always used.
+
+## Observed but not modelled
+
+- **`camera` events are intermittent.** A settings write is documented to emit
+  `changed: "camera"`, and the payload is byte-exact when it arrives, but on
+  2026-07-29 only 2 of 5 attempts delivered one (~3.0 s latency; ~6.2 s in an
+  earlier session), and once the newest of two WebSocket clients received a
+  flushed backlog of three while the older client got none. The simulator emits
+  reliably, because an unreproducible behaviour is not worth encoding. **Callers
+  should not treat `camera` events as a guarantee — poll after writes.**
+  `storage`-on-capture was reliable throughout and is what the capture flow
+  depends on.
+- **Card full.** Never captured: the test card had thousands of frames free, and
+  it cannot be forced without filling it. There is deliberately no `card_full`
+  entry in `ERROR_BODIES` — inventing that body would break the rule that every
+  byte on the wire is real. `status-device-cardfull.json` is a genuine capture of
+  a nearly-full card (`remain: 1`), which is a *state*, not a failure response.
