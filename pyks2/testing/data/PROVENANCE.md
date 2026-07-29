@@ -85,6 +85,15 @@ sim.set_user_controlled("sv")      # back to the captured list
 sim.set_exposure_mode("B")         # the real Bulb capture: tvList/xvList empty
 ```
 
+Faults are keyed by the `paths.*` constants rather than URL strings:
+
+```python
+from pyks2.testing import paths
+
+sim.fail(paths.SHOOT, "precondition")   # a real captured 412 body
+sim.drop(paths.PROPS)                   # connection dies mid-response
+```
+
 Earlier releases documented poking `sim._variables` directly. That is retired —
 `set_camera_controlled()` and friends are supported API.
 
@@ -136,5 +145,6 @@ match what `examples/` has always used.
 - **Card full.** Never captured: the test card had thousands of frames free, and
   it cannot be forced without filling it. There is deliberately no `card_full`
   entry in `ERROR_BODIES` — inventing that body would break the rule that every
-  byte on the wire is real. `status-device-cardfull.json` is a genuine capture of
-  a nearly-full card (`remain: 1`), which is a *state*, not a failure response.
+  byte on the wire is real. Asking for it raises with a pointer to
+  `status-device-cardfull.json`, a genuine capture of a nearly-full card
+  (`remain: 1`), which is a *state* rather than a failure response.
