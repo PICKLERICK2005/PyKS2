@@ -7,7 +7,7 @@ name = "pyks2"
 version = "1.2.0b2"
 description = "A Python client and CLI for the Pentax K-S2's undocumented WiFi HTTP API, plus a reverse-engineering write-up. (Web GUI planned.)"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Jamal El Siblany", email = "jamalsiblani@gmail.com" }]
@@ -17,7 +17,6 @@ classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -65,7 +64,7 @@ packages = ["pyks2", "pyks2.testing"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py39"
+target-version = "py310"
 
 [tool.mypy]
 python_version = "3.10"
