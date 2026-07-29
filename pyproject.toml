@@ -58,8 +58,10 @@ packages = ["pyks2", "pyks2.testing"]
 
 [tool.setuptools.package-data]
 # The simulator serves these at runtime, so they must ship in the wheel too —
-# MANIFEST.in alone only covers the sdist.
-"pyks2.testing" = ["data/*.json", "data/*.jsonl", "data/*.bin", "data/*.md"]
+# MANIFEST.in alone only covers the sdist. Matched by wildcard rather than by
+# extension on purpose: an extension list silently drops any new fixture type,
+# which is a packaging bug you only discover from an installed wheel.
+"pyks2.testing" = ["data/*"]
 
 [tool.ruff]
 line-length = 88
