@@ -158,7 +158,15 @@ real socket, so you can drive the **real** client with no camera on the bench.
 Every response is replayed from bytes captured off the physical camera, and it
 reproduces the awkward parts of the protocol on purpose — `errCode` in the body,
 `?limit` as a head-limit only, the empty-list writability signal, one `storage`
-event per capture.
+event per capture, no "latest" photo until something is actually shot.
+
+It is measured against the real body rather than written from the notes: the same
+probe runs against both and the results are diffed, currently 40 of 40 checks
+matching, including response times (see
+[VERIFICATION.md](docs/VERIFICATION.md)). Latency is modelled by default — a
+capture reports ~2 s later, the first live view frame waits ~830 ms for the
+mirror — because a mock that answers instantly hides the timeout and ordering
+bugs a fake camera exists to catch. Pass `timing=FAST` when you just want speed.
 
 ```python
 from pyks2.testing import SimulatorServer
@@ -179,10 +187,13 @@ In a test suite, the `ks2_simulator` fixture is registered automatically by
 installing the extra — no `conftest.py` wiring:
 
 ```python
-def test_capture(ks2_simulator):
-    cam = ks2_simulator.client()      # ephemeral port, fresh camera state
+def test_capture(ks2_simulator):      # latency off; ephemeral port
+    cam = ks2_simulator.client()      # fresh camera state per test
     assert cam.capture(af="off").path
 ```
+
+(`ks2_simulator_realistic` is the same thing with the camera's measured delays,
+for when the timing is what you're testing.)
 
 This is supported public surface, not internal scaffolding: libraries built on
 pyks2 use it to run their integration tests against a faithful camera rather
