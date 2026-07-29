@@ -82,6 +82,8 @@ __all__ = [
     "run_simulator",
     "camera_json",
     "ERROR_BODIES",
+    "ENDPOINTS",
+    "paths",
     "MJPEG_CONTENT_TYPE",
     "CAMERA_HEADERS",
 ]
@@ -276,6 +278,113 @@ ERROR_BODIES: Dict[str, str] = {
 }
 
 
+#: Every endpoint a fault can target, as ``NAME -> path``.
+#:
+#: This is the single source of truth: :func:`create_app` builds its route table
+#: from these paths and refuses to start if the two disagree, so a new route
+#: cannot appear without a name here (see ``_check_endpoint_coverage``).
+#:
+#: Names follow ``pyks2.constants.EP`` where an equivalent exists, so the two
+#: read alike. ``/v1/changes`` is deliberately absent: faults apply to HTTP
+#: requests, and the event stream is a WebSocket.
+ENDPOINTS: Dict[str, str] = {
+    "PING": "/v1/ping",
+    "APIS": "/v1/apis",
+    # read groups: bare roots and per-subsystem
+    "PROPS": "/v1/props",
+    "PROPS_CAMERA": "/v1/props/camera",
+    "PROPS_LENS": "/v1/props/lens",
+    "PROPS_LIVEVIEW": "/v1/props/liveview",
+    "PROPS_DEVICE": "/v1/props/device",
+    "CONSTANTS": "/v1/constants",
+    "CONSTANTS_CAMERA": "/v1/constants/camera",
+    "CONSTANTS_LENS": "/v1/constants/lens",
+    "CONSTANTS_LIVEVIEW": "/v1/constants/liveview",
+    "CONSTANTS_DEVICE": "/v1/constants/device",
+    "PARAMS": "/v1/params",
+    "PARAMS_CAMERA": "/v1/params/camera",
+    "PARAMS_LENS": "/v1/params/lens",
+    "PARAMS_LIVEVIEW": "/v1/params/liveview",
+    "PARAMS_DEVICE": "/v1/params/device",
+    "VARIABLES": "/v1/variables",
+    "VARIABLES_CAMERA": "/v1/variables/camera",
+    "VARIABLES_LENS": "/v1/variables/lens",
+    "VARIABLES_LIVEVIEW": "/v1/variables/liveview",
+    "VARIABLES_DEVICE": "/v1/variables/device",
+    "STATUS": "/v1/status",
+    "STATUS_CAMERA": "/v1/status/camera",
+    "STATUS_LENS": "/v1/status/lens",
+    "STATUS_LIVEVIEW": "/v1/status/liveview",
+    "STATUS_DEVICE": "/v1/status/device",
+    # actions
+    "SHOOT": "/v1/camera/shoot",
+    "SHOOT_START": "/v1/camera/shoot/start",
+    "SHOOT_FINISH": "/v1/camera/shoot/finish",
+    "LENS_FOCUS": "/v1/lens/focus",
+    # live view
+    "LIVEVIEW": "/v1/liveview",
+    "LIVEVIEW_ZOOM": "/v1/liveview/zoom",
+    # photos. The two templated ones match any dir/file, so
+    # fail(paths.PHOTO_FILE) breaks every download; pass a concrete
+    # "/v1/photos/DIR/FILE" to break just one.
+    "PHOTOS": "/v1/photos",
+    "PHOTO_LATEST_INFO": "/v1/photos/latest/info",
+    "PHOTO_INFO": "/v1/photos/{dir}/{file}/info",
+    "PHOTO_FILE": "/v1/photos/{dir}/{file}",
+}
+
+
+class paths:
+    """Endpoint constants for the fault API.
+
+    Prefer these to raw strings, so downstream fault tests are not coupled to
+    pyks2's URL spellings::
+
+        sim.fail(paths.SHOOT)          # not sim.fail("/v1/camera/shoot")
+
+    Raw paths keep working; these are just the documented form. Generated from
+    :data:`ENDPOINTS`, which :func:`create_app` validates against its own route
+    table.
+    """
+
+    __slots__ = ()
+
+    def __init__(self) -> None:  # pragma: no cover - not meant to be built
+        raise TypeError("paths is a namespace of constants, not a class to "
+                        "instantiate")
+
+    @classmethod
+    def all(cls) -> Tuple[str, ...]:
+        """Every fault-able path, for parametrising over the whole surface."""
+        return tuple(ENDPOINTS.values())
+
+    @classmethod
+    def names(cls) -> Tuple[str, ...]:
+        return tuple(ENDPOINTS)
+
+
+for _name, _path in ENDPOINTS.items():
+    setattr(paths, _name, _path)
+del _name, _path
+
+
+def _path_matches(pattern: str, request_path: str) -> bool:
+    """Does a fault's path apply to this request?
+
+    Exact string match, except that a pattern containing ``{...}`` placeholders
+    matches any single path segment in their place — so ``paths.PHOTO_FILE``
+    covers every photo download while a concrete path covers exactly one.
+    """
+    if "{" not in pattern:
+        return pattern == request_path
+    regex = "".join(
+        "[^/]+" if part.startswith("{") and part.endswith("}")
+        else re.escape(part)
+        for part in re.split(r"(\{[^}]*\})", pattern)
+    )
+    return re.fullmatch(regex, request_path) is not None
+
+
 @dataclass
 class _Fault:
     """One queued misbehaviour for a path. Internal; created via the public
@@ -448,10 +557,9 @@ class CameraSimulator:
             params_fx, vars_fx = self.EXPOSURE_MODE_FIXTURES[mode]
         except KeyError:
             raise ValueError(
-                f"no captured capability set for exposureMode={mode!r}; "
-                f"captured modes: {sorted(self.EXPOSURE_MODE_FIXTURES)}. Shape "
-                f"writability with set_camera_controlled() instead of faking a "
-                f"mode."
+                f"{mode!r} has no captured capability set; shape writability "
+                f"directly with set_camera_controlled()/set_user_controlled(). "
+                f"Captured modes: {sorted(self.EXPOSURE_MODE_FIXTURES)}."
             ) from None
         self._params = fixture_json(params_fx)
         self._variables = fixture_json(vars_fx)
@@ -528,17 +636,26 @@ class CameraSimulator:
         """Make ``path`` answer with a real captured error body.
 
         Args:
-            path: exact endpoint path, e.g. ``"/v1/camera/shoot"``. The
-                templates live in ``pyks2.constants.EP``.
+            path: which endpoint, preferably a :class:`paths` constant so your
+                tests aren't coupled to pyks2's URL spellings. A raw string
+                works too. ``paths.PHOTO_FILE`` and ``paths.PHOTO_INFO`` are
+                templated and match any dir/file; pass a concrete
+                ``"/v1/photos/DIR/FILE"`` to target one photo.
             error: a key of :data:`ERROR_BODIES` — ``"precondition"`` (412),
                 ``"bad_request"`` (400), ``"not_found"`` (404), or
                 ``"unhandled_method"`` (a real HTTP 400 with an HTML body).
             times: how many calls to fail; ``None`` means every call.
 
-            >>> sim.fail("/v1/camera/shoot")                  # next shot 412s
-            >>> sim.fail("/v1/photos", "bad_request", times=3)
+            >>> sim.fail(paths.SHOOT)                          # next shot 412s
+            >>> sim.fail(paths.PHOTOS, "bad_request", times=3)
         """
         if error not in ERROR_BODIES:
+            if error in ("card_full", "cardfull", "card-full"):
+                raise ValueError(
+                    "card-full was never captured on hardware; use the "
+                    "near-full status state (status-device-cardfull.json, "
+                    "remain: 1) instead."
+                )
             raise ValueError(
                 f"unknown error {error!r}; captured errors: "
                 f"{sorted(ERROR_BODIES)}")
@@ -548,7 +665,10 @@ class CameraSimulator:
         """Make ``path`` die mid-response, so the client sees a broken
         connection rather than an error body. Surfaces as
         ``KS2ConnectionError``. Behavioural — there is no fixture for a dropped
-        socket."""
+        socket.
+
+            >>> sim.drop(paths.PROPS)
+        """
         self._faults.append(_Fault(path, "drop", remaining=times))
 
     def delay(self, path: str, seconds: float, *,
@@ -574,7 +694,7 @@ class CameraSimulator:
     def _take_fault(self, path: str) -> Optional[_Fault]:
         """Pop the next applicable fault for ``path``, if any."""
         for fault in self._faults:
-            if fault.path == path and not fault.spent:
+            if not fault.spent and _path_matches(fault.path, path):
                 fault.consume()
                 if fault.spent:
                     self._faults.remove(fault)
@@ -740,6 +860,38 @@ class CameraSimulator:
                 self._params[key] = value
                 changed = True
         return self.variables_camera(), changed
+
+
+#: routes that exist but cannot carry a fault, with the reason
+_UNFAULTABLE = {
+    "/v1/changes": "WebSocket; faults apply to HTTP requests",
+    "/{path:path}": "catch-all for unknown paths, not a real endpoint",
+}
+
+
+def _check_endpoint_coverage(routes: List[Any]) -> None:
+    """Fail loudly if the route table and :data:`ENDPOINTS` have drifted.
+
+    Runs when the app is built rather than only in a test, so a route added
+    without a symbolic name is caught the first time anyone starts the
+    simulator — the fault API's constants cannot silently miss an endpoint.
+    """
+    routed = {getattr(r, "path", None) for r in routes} - {None}
+    faultable = routed - set(_UNFAULTABLE)
+    named = set(ENDPOINTS.values())
+    unnamed = faultable - named
+    stale = named - faultable
+    if unnamed or stale:
+        problems = []
+        if unnamed:
+            problems.append(
+                f"routed but missing from ENDPOINTS: {sorted(unnamed)}")
+        if stale:
+            problems.append(
+                f"in ENDPOINTS but not routed: {sorted(stale)}")
+        raise RuntimeError(
+            "pyks2 simulator endpoint constants have drifted from the route "
+            "table — " + "; ".join(problems))
 
 
 def create_app(sim: Optional[CameraSimulator] = None) -> Any:
@@ -1047,6 +1199,7 @@ def create_app(sim: Optional[CameraSimulator] = None) -> Any:
         # to the 405 handler and gets the HTML treatment.
         Route("/{path:path}", catch_all, methods=["GET", "POST", "PUT"]),
     ]
+    _check_endpoint_coverage(routes)
 
     app = Starlette(routes=routes,
                     exception_handlers={405: unhandled_method})
@@ -1105,8 +1258,10 @@ def create_app(sim: Optional[CameraSimulator] = None) -> Any:
                                 headers=dict(CAMERA_HEADERS))
         await response(scope, receive, send)
 
-    faults.state = app.state          # type: ignore[attr-defined]
     app.state.simulator = sim
+    faults.state = app.state          # type: ignore[attr-defined]
+    #: the wrapped Starlette app, so the route table stays introspectable
+    faults.app = app                  # type: ignore[attr-defined]
     return faults
 
 

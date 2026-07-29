@@ -40,6 +40,8 @@ __all__ = [
     "run_simulator",
     "camera_json",
     "ERROR_BODIES",
+    "ENDPOINTS",
+    "paths",
     "MJPEG_CONTENT_TYPE",
     "CAMERA_HEADERS",
 ]
