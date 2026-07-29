@@ -493,7 +493,13 @@ class K_S2_WiFi:
         return PhotoInfo.from_dict(self._request("GET", ep))
 
     def latest_info(self) -> PhotoInfo:
-        """GET /v1/photos/latest/info. Metadata for the most recent shot."""
+        """GET /v1/photos/latest/info. Metadata for the most recent shot.
+
+        "Most recent" means most recent *this power session*, not newest on the
+        card: until the camera captures something since power-on it answers
+        ``captured: false`` with no ``dir``/``file``, however full the card is.
+        Expect ``.path`` to be None in that case (measured 2026-07-29).
+        """
         return PhotoInfo.from_dict(self._request("GET", C.EP.PHOTO_LATEST_INFO))
 
     def wait_for_capture(self, since: Optional[str] = None,
@@ -501,10 +507,15 @@ class K_S2_WiFi:
                          poll_interval: float = 0.5) -> PhotoInfo:
         """Poll latest/info until a NEW captured file appears.
 
-        ``/v1/photos/latest/info`` always reports ``captured: true`` for the
-        last existing image, so a naive "captured is true" check returns the
-        *previous* photo instantly. This method compares against a baseline
-        path and only returns once the latest path actually changes.
+        Once anything has been captured this power session, ``latest/info``
+        reports ``captured: true`` for that image, so a naive "captured is true"
+        check returns the *previous* photo instantly. This method compares
+        against a baseline path and only returns once the latest path changes.
+
+        Note on ``since=None``: the baseline is then read here, *after* the shot
+        was triggered. That is safe only because the camera takes ~2 s to write
+        the file, so the read still sees the old value. Prefer passing the
+        baseline you captured yourself before firing.
 
         Args:
             since: The path (``DIR/FILE``) that was latest BEFORE you triggered
