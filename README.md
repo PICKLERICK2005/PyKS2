@@ -1,5 +1,6 @@
 # PyKS2
 
+[![PyPI](https://img.shields.io/pypi/v/pyks2)](https://pypi.org/project/pyks2/)
 [![tests](https://github.com/PICKLERICK2005/pyks2/actions/workflows/test.yml/badge.svg)](https://github.com/PICKLERICK2005/pyks2/actions/workflows/test.yml)
 [![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-MIT-green)](https://github.com/PICKLERICK2005/pyks2/blob/main/LICENSE)
@@ -57,7 +58,7 @@ pyks2/          the library (camera-only HTTP client, typed models, WS events)
   ├─ constants.py    endpoints + capability enums
   ├─ errors.py       typed exceptions (errCode-aware)
   ├─ _mjpeg.py       shared MJPEG frame parser (sync + async liveview)
-  ├─ async_client.py optional async streaming (pyks2[async]; beta)
+  ├─ async_client.py optional async streaming (pyks2[async])
   └─ cli.py          the command-line interface
 docs/           the reverse-engineering write-up (GitHub Pages source)
   ├─ PROTOCOL.md     the API dissection
@@ -70,7 +71,7 @@ examples/       real captured JSON responses + the machine-readable API referenc
 ## Quick start
 
 ```bash
-pip install pyks2==1.1.0b1            # or: pip install -e .  from a clone
+pip install pyks2                     # or: pip install -e .  from a clone
 ```
 
 Join the camera's WiFi (`PENTAX_XXXXXX`), then:
@@ -121,11 +122,11 @@ with cam.liveview() as stream:       # closes the stream (drops the mirror)
 
 ---
 
-## Async streaming (beta)
+## Async streaming
 
 `pip install pyks2[async]` pulls in `httpx`/`websockets` for async equivalents
-of the event stream and live view. **Not yet verified against the physical
-camera** — see [CHANGELOG](CHANGELOG.md).
+of the event stream and live view. Hardware-verified against a physical K-S2 —
+see [VERIFICATION.md](docs/VERIFICATION.md).
 
 ```python
 async with cam.events_async() as ev:
@@ -133,6 +134,15 @@ async with cam.events_async() as ev:
         if change.is_storage:
             print("captured:", cam.latest_info().path)
 ```
+
+```python
+async for jpeg in cam.iter_liveview_frames_async(max_frames=10):
+    ...                               # 720x480 JPEGs; mirror drops on close
+```
+
+Both share their parsing with the sync path — MJPEG framing via
+`pyks2._mjpeg`, event decoding via `events._payload_to_event` — so there is no
+duplicated protocol logic between sync and async.
 
 ---
 
