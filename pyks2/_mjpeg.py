@@ -8,8 +8,6 @@ arrive, get back complete JPEG frames.
 
 from __future__ import annotations
 
-from typing import List
-
 _SOI = b"\xff\xd8"
 _EOI = b"\xff\xd9"
 
@@ -25,11 +23,11 @@ class MjpegFrameParser:
     def __init__(self) -> None:
         self._buf = b""
 
-    def feed(self, chunk: bytes) -> List[bytes]:
+    def feed(self, chunk: bytes) -> list[bytes]:
         if not chunk:
             return []
         self._buf += chunk
-        frames: List[bytes] = []
+        frames: list[bytes] = []
         while True:
             soi = self._buf.find(_SOI)
             eoi = self._buf.find(_EOI, soi + 2) if soi >= 0 else -1

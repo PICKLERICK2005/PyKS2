@@ -3,6 +3,7 @@ so the whole library can be tested without a physical camera."""
 import os
 import sys
 import types
+
 import pytest
 
 EX = os.path.join(os.path.dirname(__file__), "..", "examples")
@@ -95,10 +96,11 @@ class _Session:
         if p == "/v1/liveview/zoom":
             return _Resp('{"errCode":200,"errMsg":"OK"}')
         if p == "/v1/liveview":
-            return _Resp(LIVEVIEW_BODY,
-                         ctype="multipart/x-mixed-replace; boundary=--boundarydonotcross")
+            return _Resp(LIVEVIEW_BODY, ctype=(
+                "multipart/x-mixed-replace; boundary=--boundarydonotcross"))
         if p == "/v1/lens/focus":
-            return _Resp('{"errCode":200,"errMsg":"OK","focused":true,"focusCenters":[]}')
+            return _Resp('{"errCode":200,"errMsg":"OK","focused":true,'
+                         '"focusCenters":[]}')
         if p == "/v1/photos" or p.startswith("/v1/photos?"):
             return _Resp(_ex("photos-listing.json"))
         if p.endswith("/info"):
@@ -132,6 +134,7 @@ def cam(monkeypatch):
     monkeypatch.setitem(sys.modules, "requests", fake)
     # reload client so it picks up the fake
     import importlib
+
     import pyks2.client
     importlib.reload(pyks2.client)
     return pyks2.client.K_S2_WiFi()

@@ -8,8 +8,6 @@ errors.
 
 from __future__ import annotations
 
-from typing import Optional
-
 
 class KS2Error(Exception):
     """Base class for all pyks2 errors."""
@@ -34,7 +32,7 @@ class KS2APIError(KS2Error):
     """
 
     def __init__(self, err_code: int, err_msg: str = "",
-                 endpoint: Optional[str] = None):
+                 endpoint: str | None = None):
         self.err_code = err_code
         self.err_msg = err_msg
         self.endpoint = endpoint
