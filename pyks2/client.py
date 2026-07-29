@@ -753,9 +753,9 @@ class K_S2_WiFi:
         """Return an AsyncChangesClient for the /v1/changes WebSocket (async).
 
         Requires the optional ``websockets`` dependency:
-        ``pip install pyks2[async]``. NOT yet verified against physical
-        hardware (inferred from the sync ``ChangesClient``'s verified
-        handshake/event behaviour) — see CHANGELOG.
+        ``pip install pyks2[async]``. Hardware-verified: delivers the same
+        ``/v1/changes`` payloads as the sync ``ChangesClient`` for a capture
+        (see docs/VERIFICATION.md).
 
         Usage:
             >>> async with cam.events_async() as ev:
@@ -771,7 +771,9 @@ class K_S2_WiFi:
 
         Shares the same ``MjpegFrameParser`` boundary-scanning logic as the
         sync path — only the transport (httpx instead of requests) differs.
-        NOT yet verified against physical hardware — see CHANGELOG.
+        Hardware-verified: yields real 720x480 JPEGs, and raises the camera's
+        mirror on start / drops it on close, matching the sync path (see
+        docs/VERIFICATION.md).
 
         Usage:
             >>> async for frame in cam.iter_liveview_frames_async():
