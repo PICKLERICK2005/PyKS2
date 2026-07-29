@@ -3,6 +3,86 @@
 All notable changes to **pyks2** are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.0b2] — 2026-07-29
+
+The simulator, measured against the camera instead of written from the notes.
+The same raw-socket probe was run against the physical body and against the
+simulator and the results diffed: **40 of 40 checks now match**, covering wire
+behaviour and response times. Full record in
+[`docs/VERIFICATION.md`](docs/VERIFICATION.md).
+
+Still beta for the same reason as `1.2.0b1` — the simulator's public API is not
+frozen yet, not because anything is unverified.
+
+### Fixed
+- **`/v1/liveview/zoom` gating was documented wrong.** PROTOCOL.md §9 claimed an
+  empty body returned `200`. Measuring it: with no stream running, all of no
+  body, an empty body and `zoom=1` returned `412`; with a stream running, all
+  three returned `200`. The gate is purely whether live view is streaming. §9
+  corrected and the simulator matches.
+- **`latest_info()` does not always report a file.** After a power cycle, with
+  358 files on the card, `/v1/photos/latest/info` returned `captured: false` with
+  no `dir`/`file` — "latest" means latest *this power session*, not newest on the
+  card. The `latest_info()` and `wait_for_capture()` docstrings said otherwise
+  and are corrected; the simulator now starts in that state.
+- **Captured fixtures were being corrupted by git.** With `core.autocrlf=true`,
+  the norm on Windows, a fresh clone rewrote every LF as CRLF: the `/v1/changes`
+  payload became 54 bytes instead of the 53 measured on the wire, and
+  `photos-listing.json` picked up 29 stray CRs. CI runs on Linux so it would
+  never have failed there. A `.gitattributes` now pins the fixture bytes;
+  `unhandled-method.html` needed the opposite treatment, since the camera really
+  does send CRLF in that body.
+- **Not every fixture type was reaching the wheel.** The package-data glob listed
+  extensions, so a new `.jpg` and `.html` fixture were silently left out of the
+  wheel while the sdist was fine — the failure only shows up from an installed
+  wheel. Matched by wildcard now.
+- The live view stream busy-looped when the frame interval was zero, flooding the
+  socket and starving the event loop, and `stop()` waited its full timeout on any
+  open stream. Fixed with a floored interval, a disconnect check, and a forced
+  exit after a short grace period. The suite went from 376 s to 21 s.
+
+### Added
+- **Modelled response latency** (`pyks2.testing.Timing`), from measured medians:
+  ~103 ms for `/v1/props`, ~1.5 s for a 358-file `/v1/photos` (it scales at
+  ~110 ms + 3.9 ms per file returned, which is why `?limit` exists), ~1.9 s from
+  shutter to `storage` event, ~830 ms for the first live view frame while the
+  mirror flips up, ~7.6 fps thereafter. Realistic is the **default**, because a
+  mock that answers instantly hides the timeout and ordering bugs a fake camera
+  exists to catch; pass `timing=FAST` for none. The `ks2_simulator` fixture is
+  fast, and a new `ks2_simulator_realistic` is there when the timing itself is
+  under test.
+- Generated responses are encoded in the firmware's own JSON house style
+  (`camera_json()`), verified by round-tripping captured bodies byte-for-byte, so
+  computed responses look like replayed ones on the wire.
+- Re-captured fixtures: `/v1/photos` is now a **full card**, 358 files across 6
+  directories, so cross-directory flattening and ordering are genuinely
+  exercised; and `?size=view` serves the **real 53 KB camera preview** rather
+  than a live view frame standing in for one. `?size=full` is now the only
+  fabricated payload, an 18 MB DNG being impractical to commit.
+
+### Also pinned down
+- `PUT /v1/params/camera` echoes a `variables`-shaped body (the capability lists,
+  `state` and `exposureModeOption`), not just the params a `GET` returns.
+- `?limit=N` keeps every directory in the response, giving those past the limit
+  an empty `files` list, and `limit=0` means *no limit*.
+- A missing photo is `errCode 404` and an unknown path `errCode 400`, both under
+  HTTP 200; an unhandled **method** is the one break from Law 1, a real HTTP 400
+  with an HTML body.
+- `/v1/changes` payloads end with a newline — the storage frame is 53 bytes.
+- Listing order is ascending shot number, which is not the same as sorted
+  filenames: a RAW+JPEG pair shares a number and the `.JPG` comes first.
+- Every response carries `Server: server`, `Cache-Control`, `Pragma`, `Expires`,
+  `Max-Age` and `Accept-Ranges`, and no `Date`.
+
+### Note on `capture()`
+Worth knowing rather than changing: with no latest photo yet, `capture()` passes
+`since=None`, which makes `wait_for_capture()` re-read the baseline *after* the
+shutter has fired. That is safe against the real camera only because the file
+takes ~2 s to appear. An early simulator build created the file instantly and
+`capture()` hung, adopting the new file as its own baseline. The simulator now
+defers the file exactly as the camera does, with a floor that survives
+`timing=FAST`.
+
 ## [1.2.0b1] — 2026-07-29
 
 A prerelease so the new simulator can soak before its API is frozen. Beta
@@ -44,54 +124,8 @@ unverified — the simulator replays hardware-captured wire data throughout.
   412/200 gating on `/v1/liveview/zoom`. State is intentionally shallow: only a
   capture mutates anything, making a new file appear and firing the matching
   event so a shoot → new-file → download sequence works. The two payloads that
-  is not captured bytes (`?size=full`) is documented in
+  are not captured bytes (`?size=view`, `?size=full`) are documented in
   `pyks2/testing/data/PROVENANCE.md`.
-- **The simulator was measured against the physical camera**, not just written to
-  match the notes: the same raw-socket probe was run against both and diffed,
-  and **40 of 40 checks match** — error codes, gating, listing and PUT shapes,
-  MJPEG framing, WebSocket frame bytes, and latency. See
-  [`docs/VERIFICATION.md`](docs/VERIFICATION.md). Three deviations are
-  deliberate and documented (header casing/order, chunked transfer-encoding on
-  the MJPEG stream, the synthetic `?size=full` payload); none is observable
-  through an HTTP client.
-- **Modelled response latency** (`pyks2.testing.Timing`), from measured medians:
-  ~103 ms for `/v1/props`, ~1.5 s for a 358-file `/v1/photos` (it scales at
-  ~110 ms + 3.9 ms/file, which is why `?limit` exists), ~1.9 s from shutter to
-  `storage` event, ~830 ms for the first live view frame while the mirror flips
-  up, ~7.6 fps thereafter. Realistic is the default, because a mock that answers
-  instantly hides the timeout and ordering bugs a fake camera exists to catch;
-  pass `timing=FAST` for none. The shipped `ks2_simulator` fixture is fast, and
-  `ks2_simulator_realistic` is there when the timing is the thing under test.
-- Generated responses are encoded in the firmware's own JSON house style
-  (`camera_json()`), verified by round-tripping captured bodies byte-for-byte, so
-  computed responses look like replayed ones on the wire.
-
-### Fixed
-- **`/v1/liveview/zoom` gating was documented wrong.** PROTOCOL.md §9 claimed an
-  empty body returned `200`. Measuring it: with no stream running, all of no
-  body, an empty body and `zoom=1` returned `412`; with a stream running, all
-  three returned `200`. The gate is purely whether live view is streaming. §9
-  corrected and the simulator matches.
-- **`latest_info()` does not always report a file.** After a power cycle, with
-  358 files on the card, `/v1/photos/latest/info` returned `captured: false` with
-  no `dir`/`file` — "latest" means latest *this power session*. The
-  `latest_info()` and `wait_for_capture()` docstrings said otherwise and are
-  corrected; the simulator now starts in that state. Worth knowing when reading
-  `capture()`: with an empty baseline it lets `wait_for_capture()` re-read the
-  baseline *after* firing, which is safe only because the file takes ~2 s to
-  appear.
-
-### Also pinned down
-- `PUT /v1/params/camera` echoes a `variables`-shaped body (the capability lists,
-  `state` and `exposureModeOption`), not just the params a `GET` returns.
-- `?limit=N` keeps every directory in the response, giving those past the limit
-  an empty `files` list, and `limit=0` means *no limit*.
-- A missing photo is `errCode 404` and an unknown path `errCode 400`, both under
-  HTTP 200; an unhandled **method** is the one break from Law 1, a real HTTP 400
-  with an HTML body.
-- `/v1/changes` payloads end with a newline — the storage frame is 53 bytes.
-- Listing order is ascending shot number, which is not the same as sorted
-  filenames: a RAW+JPEG pair shares a number and the `.JPG` comes first.
 - **Tests driving the real client against the simulator** over loopback, for
   both transports — `events_async()` and `iter_liveview_frames_async()`
   included — covering the requests/httpx/websockets transports and the MJPEG

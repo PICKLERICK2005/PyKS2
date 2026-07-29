@@ -158,7 +158,9 @@ real socket, so you can drive the **real** client with no camera on the bench.
 Every response is replayed from bytes captured off the physical camera, and it
 reproduces the awkward parts of the protocol on purpose — `errCode` in the body,
 `?limit` as a head-limit only, the empty-list writability signal, one `storage`
-event per capture, no "latest" photo until something is actually shot.
+event per capture, no "latest" photo until something is actually shot. Its card
+is a real listing too: 358 files across six directories, including a RAW+JPEG
+pair, so cross-directory ordering behaves like the real thing.
 
 It is measured against the real body rather than written from the notes: the same
 probe runs against both and the results are diffed, currently 40 of 40 checks
