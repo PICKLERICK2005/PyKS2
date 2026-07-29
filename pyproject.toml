@@ -66,6 +66,22 @@ packages = ["pyks2", "pyks2.testing"]
 line-length = 88
 target-version = "py310"
 
+[tool.ruff.lint]
+# Pinned explicitly rather than relying on ruff's defaults, which shift between
+# releases: CI resolves the newest ruff, so an unpinned rule set meant branch CI
+# and a developer's machine could disagree about whether the tree was clean.
+#   E, W  pycodestyle    - layout and whitespace
+#   F     pyflakes       - real errors: unused names, undefined names
+#   I     isort          - deterministic import order
+#   B     bugbear        - likely bugs, e.g. blind `raises(Exception)`
+#   UP    pyupgrade      - keep to modern syntax now that 3.10 is the floor
+select = ["E", "W", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# The fake `requests` module in conftest mirrors the real one's shape, so its
+# stand-in methods keep the upstream signatures rather than ruff's preferences.
+"tests/conftest.py" = ["B006"]
+
 [tool.mypy]
 python_version = "3.10"
 warn_unused_ignores = true
