@@ -1,15 +1,14 @@
 # Simulator fixture provenance
 
-These files are the simulator's serving data. They are **copies of the real
-captures** in the repo's `examples/` directory, duplicated here on purpose:
-`examples/` is not installed, so a simulator reading from it would work in a git
-checkout and break for anyone who ran `pip install pyks2[testing]`. Everything
-here ships in both the sdist and the wheel.
+These files are the simulator's serving data. They live here, rather than being
+read from the repo's `examples/`, because `examples/` is not installed: a
+simulator reading from it would work in a git checkout and break for anyone who
+ran `pip install pyks2[testing]`. Everything here ships in both the sdist and the
+wheel.
 
-All of it came off a physical **Pentax K-S2**, firmware `01.10`. See
-`../../../examples/README.md` for the original capture provenance and
-`../../../docs/VERIFICATION.md` for the hardware-verification record behind the
-`/v1/changes` and `/v1/liveview` captures.
+All of it came off a physical **Pentax K-S2**, firmware `01.10`. The bodies are
+unmodified response bytes. See `../../../docs/VERIFICATION.md` for the
+hardware-verification and fidelity records.
 
 | File | Endpoint |
 |---|---|
@@ -19,42 +18,69 @@ All of it came off a physical **Pentax K-S2**, firmware `01.10`. See
 | `constants-camera.json`, `constants-device.json` | `GET /v1/constants/{sub}` |
 | `variables-camera.json` | `GET /v1/variables/camera` — source of the `*List` writability signal |
 | `status-*.json` | `GET /v1/status/{sub}` |
-| `photos-listing.json` | `GET /v1/photos` |
+| `photos-listing.json` | `GET /v1/photos` — full card, 358 files across 6 dirs |
 | `photos-latest-info.json` | `GET /v1/photos/latest/info` |
+| `photo-info.json` | `GET /v1/photos/{dir}/{file}/info` (a non-latest file) |
+| `photo-preview-view.jpg` | `GET /v1/photos/{dir}/{file}?size=view` — real 53 KB preview |
 | `camera-shoot-response.json` | `POST /v1/camera/shoot` |
 | `lens-focus-response.json` | `POST /v1/lens/focus` |
-| `error-400-bad-request.json`, `error-412-precondition.json` | `errCode` body shapes |
+| `error-400-bad-request.json`, `error-404-not-found.json`, `error-412-precondition.json` | `errCode` body shapes |
+| `unhandled-method.html` | the HTML body an unhandled method returns |
 | `changes-events.jsonl` | `WS /v1/changes` — both `changed` kinds |
 | `changes-capture-sequence.jsonl` | `WS /v1/changes` — complete sequence for one capture |
 | `liveview-frame-raw.bin` | `GET /v1/liveview` — one raw multipart part, framing intact |
 
-## Where the simulator does not replay captured bytes
+The listing, latest-info, photo-info, preview JPEG and error bodies were
+re-captured on **2026-07-29** during the fidelity pass, which is why the listing
+and latest-info now agree with each other (`105_2907/IMGP2331.DNG` is present in
+the listing) where earlier copies came from different cards.
 
-Two payloads are not real captures, because no capture exists. Both are called
-out in the code that produces them:
+## Generated rather than replayed
 
-1. **`?size=view` photo download** serves the JPEG extracted from
-   `liveview-frame-raw.bin`. Those are real camera JPEG bytes, but from a live
-   view frame, not a photo preview — no preview binary was ever captured.
-2. **`?size=full` photo download** is synthetic: TIFF magic (`II*\0`) plus
-   padding. A real DNG is ~18 MB and none is committed (`*.dng` is gitignored).
-   It is sized and shaped only to satisfy the client's magic sniff and
-   `min_bytes` guard.
+Responses that depend on simulator state have to be built. They are encoded with
+`camera_json()`, which reproduces the firmware's JSON house style — `,\n `
+between members, `[ ` opening a non-empty array, a trailing newline. That is
+checked by round-tripping `photos-listing.json`, `photo-info.json` and
+`photos-latest-info.json`: re-encoding the parsed form gives back the original
+bytes exactly.
 
-## Two internal inconsistencies in the source captures
+`props.json` is *not* round-trippable — the firmware formats it inconsistently
+(`"storages" : [`, space before the colon) — so it and every other static
+response are served verbatim instead.
 
-Worth knowing if a value looks surprising:
+The one generated body with no fixture is `latest/info` before any capture,
+`{"errCode": 200,\n "errMsg": "OK",\n "captured": false}`. Re-capturing that
+state needs a power cycle, so it is asserted against the observed bytes in the
+tests rather than stored as a file.
 
-- `photos-latest-info.json` names `112_1106/IMGP0341.DNG`, which
-  `photos-listing.json` does not contain — the two were captured from different
-  cards. The simulator therefore uses the latest-info file as a *metadata
-  template* and overrides `dir`/`file` to stay consistent with its own listing.
-- `params-camera.json` and `variables-camera.json` were captured in `M` mode
-  with all four `*List`s non-empty, so in the default simulator every exposure
-  value is writable. To exercise the camera-controlled path (empty list → PUT
-  returns 200 and is silently ignored), empty a list on the instance:
+## Where the simulator is not the camera
 
-  ```python
-  sim = CameraSimulator()
-  sim._variables["svList"] = []      # ISO now camera-controlled
-  ```
+Three deliberate deviations, none observable through an HTTP client:
+
+1. **`?size=full` photo download is synthetic** — TIFF magic plus padding. A real
+   DNG is ~18 MB and none is committed (`*.dng` is gitignored). It is shaped only
+   to satisfy the client's magic sniff and `min_bytes` guard. The only fabricated
+   bytes here.
+2. **Header casing, order, and `Connection`** — uvicorn lowercases header names,
+   orders them its own way, writes `Content-Length: N` where the camera writes
+   `Content-Length:N`, and owns the connection lifecycle. `Connection` is
+   hop-by-hop, so overriding it fights the server rather than emulating the
+   camera. Header names are case-insensitive and the space after a colon is
+   optional, so nothing here is functionally visible.
+3. **MJPEG uses chunked transfer-encoding** — the camera writes the multipart
+   body raw, delimited only by connection close; an ASGI server must use chunked
+   framing for an unbounded response. Every HTTP client decodes it transparently
+   (`requests`, `httpx`, browsers), so parsers see identical bytes. Only a
+   raw-socket reader sees the chunk-size lines.
+
+## Exercising the camera-controlled path
+
+`params-camera.json` and `variables-camera.json` were captured in `M` mode with
+all four `*List`s non-empty, so by default every exposure value is writable. To
+test the camera-controlled path (empty list → PUT returns 200 and is silently
+ignored), empty a list on the instance:
+
+```python
+sim = CameraSimulator()
+sim._variables["svList"] = []      # ISO now camera-controlled
+```
