@@ -201,7 +201,12 @@ for when the timing is what you're testing.)
 
 Every knob is public API — nothing needs private attributes:
 
+The `ks2_simulator` fixture hands you the control object as `.simulator`, so a
+test can point the client at the fake *and* make it misbehave:
+
 ```python
+from pyks2.testing import paths
+
 sim = ks2_simulator.simulator
 
 # state
@@ -211,23 +216,30 @@ sim.set_camera_controlled("sv")   # ISO camera-owned: writes 200 but no-op
 sim.seed_photos({"100_0101": ["IMGP0001.DNG"]})
 
 # failures, from real captured error bodies
-sim.fail("/v1/camera/shoot")                     # next shot returns 412
-sim.fail("/v1/photos", "bad_request", times=3)
-sim.fail("/v1/props", "not_found", times=None)   # until cleared
+sim.fail(paths.SHOOT)                            # next shot returns 412
+sim.fail(paths.PHOTOS, "bad_request", times=3)
+sim.fail(paths.PROPS, "not_found", times=None)   # until cleared
 
 # transport misbehaviour (behavioural, no fixture)
-sim.drop("/v1/props")             # connection dies -> KS2ConnectionError
-sim.delay("/v1/photos", 5.0)      # slow enough to trip a client timeout
+sim.drop(paths.PROPS)             # connection dies -> KS2ConnectionError
+sim.delay(paths.PHOTOS, 5.0)      # slow enough to trip a client timeout
 sim.drop_stream_after(3)          # live view dies mid-stream
 sim.clear_faults()
 ```
 
+Use the `paths.*` constants rather than URL strings, so your tests aren't
+coupled to pyks2's spellings — `paths.all()` lists every fault-able endpoint,
+and the simulator refuses to start if a route ever appears without one. Raw
+paths still work. `paths.PHOTO_FILE` and `paths.PHOTO_INFO` are templated and
+match any photo; pass a concrete `"/v1/photos/DIR/FILE"` to target one.
+
 `fail()` only accepts errors that were actually captured — `"precondition"`
 (412), `"bad_request"` (400), `"not_found"` (404), `"unhandled_method"` (a real
 HTTP 400 with an HTML body). There is deliberately no card-full: that response
-was never captured, and the simulator does not invent wire data. Likewise
-`set_exposure_mode()` accepts only the dial positions with a real capability
-capture behind them.
+was never captured, and the simulator does not invent wire data — it tells you
+to use the near-full `remain: 1` state instead. Likewise `set_exposure_mode()`
+accepts only the dial positions with a real capability capture behind them, and
+points you at `set_camera_controlled()` when you ask for another.
 
 This is supported public surface, not internal scaffolding: libraries built on
 pyks2 use it to run their integration tests against a faithful camera rather

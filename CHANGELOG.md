@@ -28,13 +28,25 @@ exhaustively and every remaining hardware-dependent response captured.
   `set_exposure_mode()` accepts only `"M"` and `"B"` — the two dial positions
   with a real captured capability set — because lists differ per mode and
   inventing them would make the writability signal fiction.
+- **Symbolic endpoint constants** (`pyks2.testing.paths`) for the fault API, so
+  downstream tests are keyed on `paths.SHOOT` rather than `"/v1/camera/shoot"`
+  and are not coupled to pyks2's URL spellings. `paths.all()` enumerates every
+  fault-able endpoint, `ENDPOINTS` is the `NAME -> path` mapping behind it, and
+  `create_app()` **refuses to start** if the route table and the constants ever
+  disagree — so a new route cannot appear without a name. Raw path strings keep
+  working. `paths.PHOTO_FILE`/`PHOTO_INFO` are templated and match any photo,
+  while a concrete `/v1/photos/DIR/FILE` targets one.
 - **Fault injection.** `fail(path, error, times=)` returns a real captured error
   body; `drop(path)`, `delay(path, seconds)` and `drop_stream_after(frames)`
   reproduce transport misbehaviour; `clear_faults()` resets. `ERROR_BODIES`
   advertises only errors that were actually captured — `"precondition"` (412),
   `"bad_request"` (400), `"not_found"` (404), `"unhandled_method"` (a real HTTP
   400 with an HTML body). There is deliberately **no card-full**: that response
-  was never captured and the simulator does not invent wire data.
+  was never captured and the simulator does not invent wire data. Both
+  faithfulness guards redirect rather than merely refusing — asking for
+  card-full points at the near-full `remain: 1` state, and an uncaptured
+  exposure mode points at `set_camera_controlled()`. The message text is pinned
+  by tests, so the guidance survives refactoring.
 - Bulb is modelled properly: `shoot/start` and `shoot/finish` are gated on the
   dial being on `B`, a plain `shoot` on `B` returns 412, and a completed bulb
   exposure writes a file and fires one `storage` event.
