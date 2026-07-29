@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/pyks2)](https://pypi.org/project/pyks2/)
 [![tests](https://github.com/PICKLERICK2005/pyks2/actions/workflows/test.yml/badge.svg)](https://github.com/PICKLERICK2005/pyks2/actions/workflows/test.yml)
-[![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
+[![python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-MIT-green)](https://github.com/PICKLERICK2005/pyks2/blob/main/LICENSE)
 
 A Python library and CLI for controlling the **Pentax K-S2** over its
@@ -23,9 +23,9 @@ and more capable than the vendor's own Image Sync app.
 This maps what I could exercise on my own body. Two areas are not fully
 verified:
 
-- **GPS** — the optional top-mounted Pentax GPS unit surfaces in
+- **GPS**: the optional top-mounted Pentax GPS unit surfaces in
   `exposureModeList` but I couldn't test it (I don't own the unit). Untested.
-- **Live-view digital zoom** — `POST /v1/liveview/zoom` exists but was gated on
+- **Live-view digital zoom**: `POST /v1/liveview/zoom` exists but was gated on
   my setup: every parameter shape I tried returned `errCode 200`. It may need a
   lens or camera state I couldn't reach over the API. No working digital-zoom
   control was observed.
@@ -196,6 +196,38 @@ def test_capture(ks2_simulator):      # latency off; ephemeral port
 
 (`ks2_simulator_realistic` is the same thing with the camera's measured delays,
 for when the timing is what you're testing.)
+
+### Shaping the camera, and making it fail
+
+Every knob is public API — nothing needs private attributes:
+
+```python
+sim = ks2_simulator.simulator
+
+# state
+sim.set_exposure_mode("B")        # the real Bulb capture: tv/xv camera-owned
+sim.set_focus_mode("mf")          # in MF, af=auto is refused with a 412
+sim.set_camera_controlled("sv")   # ISO camera-owned: writes 200 but no-op
+sim.seed_photos({"100_0101": ["IMGP0001.DNG"]})
+
+# failures, from real captured error bodies
+sim.fail("/v1/camera/shoot")                     # next shot returns 412
+sim.fail("/v1/photos", "bad_request", times=3)
+sim.fail("/v1/props", "not_found", times=None)   # until cleared
+
+# transport misbehaviour (behavioural, no fixture)
+sim.drop("/v1/props")             # connection dies -> KS2ConnectionError
+sim.delay("/v1/photos", 5.0)      # slow enough to trip a client timeout
+sim.drop_stream_after(3)          # live view dies mid-stream
+sim.clear_faults()
+```
+
+`fail()` only accepts errors that were actually captured — `"precondition"`
+(412), `"bad_request"` (400), `"not_found"` (404), `"unhandled_method"` (a real
+HTTP 400 with an HTML body). There is deliberately no card-full: that response
+was never captured, and the simulator does not invent wire data. Likewise
+`set_exposure_mode()` accepts only the dial positions with a real capability
+capture behind them.
 
 This is supported public surface, not internal scaffolding: libraries built on
 pyks2 use it to run their integration tests against a faithful camera rather
