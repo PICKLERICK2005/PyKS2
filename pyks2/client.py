@@ -43,11 +43,39 @@ if TYPE_CHECKING:
     from .async_client import AsyncChangesClient
 
 
+def _split_host_port(ip: str, default_port: int = C.DEFAULT_PORT):
+    """Split an address that may carry a port into ``(host, port)``.
+
+    HTTP URLs can interpolate ``host:port`` as one string, but the /v1/changes
+    WebSocket needs the two separately (a raw socket connect for the sync
+    client, an explicit port in the ws:// URI for the async one). Without this,
+    an address with a port produces ``ws://host:1234:80/...``.
+    """
+    if ip.startswith("["):                      # bracketed IPv6, e.g. [::1]:8080
+        host, _, rest = ip.partition("]")
+        rest = rest.lstrip(":")
+        try:
+            return host[1:], int(rest) if rest else default_port
+        except ValueError:
+            return host[1:], default_port
+    if ip.count(":") == 1:                      # host:port
+        host, _, port = ip.partition(":")
+        try:
+            return host, int(port)
+        except ValueError:
+            return ip, default_port
+    return ip, default_port
+
+
 class K_S2_WiFi:
     """Client for the Pentax K-S2 built-in WiFi HTTP API.
 
     Args:
-        ip: Camera IP (default 192.168.0.1).
+        ip: Camera address (default 192.168.0.1). May include a port —
+            ``"127.0.0.1:8080"`` — which is what you want when pointing the
+            client at something other than the camera itself, e.g. the
+            simulator in ``pyks2.testing``. The real camera always serves on
+            port 80, so plain ``"192.168.0.1"`` is the normal form.
         timeout: Default request timeout in seconds.
         logger: Optional callable(str) for trace logging.
 
@@ -61,7 +89,11 @@ class K_S2_WiFi:
 
     def __init__(self, ip: str = C.DEFAULT_IP, timeout: float = C.DEFAULT_TIMEOUT,
                  logger: Optional[Callable[[str], None]] = None):
+        #: as given, including any ":port" — HTTP URLs interpolate this directly
         self.ip = ip
+        #: ``ip`` split into its parts, for the WebSocket stream, which needs
+        #: host and port separately rather than as one authority string
+        self.host, self.port = _split_host_port(ip)
         self.timeout = timeout
         self._log = logger or (lambda _m: None)
 
@@ -747,7 +779,8 @@ class K_S2_WiFi:
             ...     if ev.is_storage: ...   # a shot completed
         """
         from .events import ChangesClient
-        return ChangesClient(self.ip, **kwargs)
+        kwargs.setdefault("port", self.port)
+        return ChangesClient(self.host, **kwargs)
 
     def events_async(self, **kwargs) -> "AsyncChangesClient":
         """Return an AsyncChangesClient for the /v1/changes WebSocket (async).
@@ -763,7 +796,8 @@ class K_S2_WiFi:
             ...         if change.is_storage: ...
         """
         from .async_client import AsyncChangesClient
-        return AsyncChangesClient(self.ip, **kwargs)
+        kwargs.setdefault("port", self.port)
+        return AsyncChangesClient(self.host, **kwargs)
 
     def iter_liveview_frames_async(self, max_frames: Optional[int] = None):
         """Async counterpart to ``iter_liveview_frames()``. Requires the
