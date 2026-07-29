@@ -18,7 +18,6 @@ pytest.importorskip("httpx")
 from pyks2 import async_client
 from pyks2.errors import KS2ConnectionError
 
-
 # --- fakes -------------------------------------------------------------
 
 class _FakeWSExceptions:

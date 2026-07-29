@@ -18,6 +18,7 @@ import tempfile
 import time
 
 import pytest
+import requests
 
 from pyks2.errors import KS2APIError, KS2ConnectionError, KS2UnsupportedError
 
@@ -981,7 +982,9 @@ def test_drop_stream_after_kills_live_view_mid_stream(server):
     cam, sim = server.client(), server.simulator
     sim.drop_stream_after(2)
     seen = 0
-    with pytest.raises(Exception):
+    # A dropped stream must surface as a transport failure, not merely "some
+    # exception" — a clean end of stream would be a different bug.
+    with pytest.raises(requests.exceptions.RequestException):
         for _ in cam.iter_liveview_frames(max_frames=10):
             seen += 1
     assert seen == 2, f"expected the drop after 2 frames, got {seen}"
@@ -1000,7 +1003,10 @@ def test_a_second_live_view_stream_displaces_the_first(server):
     second_chunks = second.iter_content(4096)
     next(second_chunks)                             # second takes over
     try:
-        with pytest.raises(Exception):
+        # The displaced stream ends: either the body simply stops (StopIteration)
+        # or the connection is torn down (a requests transport error). Both are
+        # "it stopped"; anything else would be a real failure.
+        with pytest.raises((StopIteration, requests.exceptions.RequestException)):
             for _ in range(500):
                 next(first_chunks)
     finally:

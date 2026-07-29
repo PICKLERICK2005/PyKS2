@@ -54,7 +54,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 try:  # pragma: no cover - exercised by the extra-missing path
     from starlette.applications import Starlette
@@ -208,7 +208,7 @@ def _require() -> None:
 # examples/ or tests/ — those are not installed, so reading them would work
 # from a git checkout and break for anyone who did `pip install pyks2[testing]`.
 
-_cache: Dict[str, bytes] = {}
+_cache: dict[str, bytes] = {}
 
 
 def fixture_bytes(name: str) -> bytes:
@@ -231,7 +231,7 @@ def fixture_json(name: str) -> Any:
 # Endpoints served verbatim from a captured response. Serving the original
 # bytes (rather than a json.dumps round-trip) preserves the camera's own
 # odd whitespace, so clients see the real formatting too.
-_STATIC: Dict[str, str] = {
+_STATIC: dict[str, str] = {
     "/v1/ping": "ping.json",
     "/v1/apis": "apis.json",
     "/v1/props": "props.json",
@@ -270,7 +270,7 @@ _OK = {"errCode": 200, "errMsg": "OK"}
 #: captured body. There is deliberately no "card full" here: that failure was
 #: never captured (the test card had thousands of frames free) and inventing a
 #: body would break the rule that everything on the wire is real.
-ERROR_BODIES: Dict[str, str] = {
+ERROR_BODIES: dict[str, str] = {
     "precondition": "error-412-precondition.json",   # errCode 412
     "bad_request": "error-400-bad-request.json",     # errCode 400
     "not_found": "error-404-not-found.json",         # errCode 404
@@ -287,7 +287,7 @@ ERROR_BODIES: Dict[str, str] = {
 #: Names follow ``pyks2.constants.EP`` where an equivalent exists, so the two
 #: read alike. ``/v1/changes`` is deliberately absent: faults apply to HTTP
 #: requests, and the event stream is a WebSocket.
-ENDPOINTS: Dict[str, str] = {
+ENDPOINTS: dict[str, str] = {
     "PING": "/v1/ping",
     "APIS": "/v1/apis",
     # read groups: bare roots and per-subsystem
@@ -354,12 +354,12 @@ class paths:
                         "instantiate")
 
     @classmethod
-    def all(cls) -> Tuple[str, ...]:
+    def all(cls) -> tuple[str, ...]:
         """Every fault-able path, for parametrising over the whole surface."""
         return tuple(ENDPOINTS.values())
 
     @classmethod
-    def names(cls) -> Tuple[str, ...]:
+    def names(cls) -> tuple[str, ...]:
         return tuple(ENDPOINTS)
 
 
@@ -391,9 +391,9 @@ class _Fault:
     ``fail``/``drop``/``delay`` methods."""
     path: str
     kind: str                      # "fail" | "drop" | "delay"
-    error: Optional[str] = None    # key into ERROR_BODIES, for kind="fail"
+    error: str | None = None    # key into ERROR_BODIES, for kind="fail"
     seconds: float = 0.0           # for kind="delay"
-    remaining: Optional[int] = 1   # None means "every time"
+    remaining: int | None = 1   # None means "every time"
 
     def consume(self) -> None:
         if self.remaining is not None:
@@ -404,7 +404,7 @@ class _Fault:
         return self.remaining is not None and self.remaining <= 0
 
 
-def _err(code: int, msg: str) -> Dict[str, Any]:
+def _err(code: int, msg: str) -> dict[str, Any]:
     return {"errCode": code, "errMsg": msg}
 
 
@@ -464,21 +464,21 @@ class CameraSimulator:
     isolation; the pytest fixture does that for you.
     """
 
-    def __init__(self, timing: Optional[Timing] = None) -> None:
+    def __init__(self, timing: Timing | None = None) -> None:
         #: latency model; pass ``FAST`` (or ``Timing(scale=0)``) to remove it
         self.timing = timing if timing is not None else Timing()
 
-        self._params: Dict[str, Any] = fixture_json("params-camera.json")
-        self._variables: Dict[str, Any] = fixture_json("variables-camera.json")
-        self._dirs: List[Dict[str, Any]] = [
+        self._params: dict[str, Any] = fixture_json("params-camera.json")
+        self._variables: dict[str, Any] = fixture_json("variables-camera.json")
+        self._dirs: list[dict[str, Any]] = [
             {"name": d["name"], "files": list(d["files"])}
             for d in fixture_json("photos-listing.json").get("dirs", [])
         ]
-        self._info_template: Dict[str, Any] = fixture_json("photo-info.json")
+        self._info_template: dict[str, Any] = fixture_json("photo-info.json")
 
         #: ``DIR/FILE`` captured in this "power session", or None. The camera
         #: reports no latest until it takes a picture, however full the card is.
-        self.latest_captured: Optional[str] = None
+        self.latest_captured: str | None = None
 
         #: ``"af"`` or ``"mf"``. In MF the camera refuses ``af=auto`` with a 412
         #: (measured), which is the classic "why won't it fire over WiFi" trap.
@@ -489,7 +489,7 @@ class CameraSimulator:
 
         # Real event payloads, keyed by their `changed` value, so broadcasts
         # replay captured bytes rather than re-serialised JSON.
-        self._events: Dict[str, str] = {}
+        self._events: dict[str, str] = {}
         for fname in ("changes-events.jsonl", "changes-capture-sequence.jsonl"):
             for line in fixture_text(fname).splitlines():
                 line = line.strip()
@@ -512,17 +512,17 @@ class CameraSimulator:
         #: streaming, matching the camera's one-stream-at-a-time behaviour
         self._stream_generation = 0
         #: every payload broadcast, in order — handy for assertions
-        self.emitted: List[str] = []
-        self._queues: List[Any] = []
+        self.emitted: list[str] = []
+        self._queues: list[Any] = []
         self._lock = threading.Lock()
         #: strong references to in-flight background tasks
         self._pending: set = set()
         #: why the last shutter release was refused, if it was — for assertions
-        self.last_refusal: Optional[str] = None
+        self.last_refusal: str | None = None
         #: queued faults, see fail()/drop()/delay()
-        self._faults: List[_Fault] = []
+        self._faults: list[_Fault] = []
         #: kill the live view stream after N frames, see drop_stream_after()
-        self._stream_drop_after: Optional[int] = None
+        self._stream_drop_after: int | None = None
 
     # -- public configuration ---------------------------------------------
     #
@@ -607,7 +607,7 @@ class CameraSimulator:
         """Whether ``field`` is user-settable right now."""
         return bool(self._variables.get(f"{field}List"))
 
-    def seed_photos(self, dirs: Dict[str, List[str]]) -> None:
+    def seed_photos(self, dirs: dict[str, list[str]]) -> None:
         """Replace the card's contents.
 
         ``dirs`` maps directory name to filenames, oldest first, e.g.
@@ -632,7 +632,7 @@ class CameraSimulator:
     # -- public fault injection -------------------------------------------
 
     def fail(self, path: str, error: str = "precondition", *,
-             times: Optional[int] = 1) -> None:
+             times: int | None = 1) -> None:
         """Make ``path`` answer with a real captured error body.
 
         Args:
@@ -661,7 +661,7 @@ class CameraSimulator:
                 f"{sorted(ERROR_BODIES)}")
         self._faults.append(_Fault(path, "fail", error=error, remaining=times))
 
-    def drop(self, path: str, *, times: Optional[int] = 1) -> None:
+    def drop(self, path: str, *, times: int | None = 1) -> None:
         """Make ``path`` die mid-response, so the client sees a broken
         connection rather than an error body. Surfaces as
         ``KS2ConnectionError``. Behavioural — there is no fixture for a dropped
@@ -672,18 +672,18 @@ class CameraSimulator:
         self._faults.append(_Fault(path, "drop", remaining=times))
 
     def delay(self, path: str, seconds: float, *,
-              times: Optional[int] = 1) -> None:
+              times: int | None = 1) -> None:
         """Stall ``path`` for ``seconds`` before responding, to exercise client
         timeouts. Behavioural, like :meth:`drop`."""
         self._faults.append(_Fault(path, "delay", seconds=seconds,
                                    remaining=times))
 
-    def drop_stream_after(self, frames: Optional[int]) -> None:
+    def drop_stream_after(self, frames: int | None) -> None:
         """Kill the live view stream after ``frames`` frames, as if the camera
         or the WiFi went away mid-stream. ``None`` disables it."""
         self._stream_drop_after = frames
 
-    def clear_faults(self, path: Optional[str] = None) -> None:
+    def clear_faults(self, path: str | None = None) -> None:
         """Forget queued faults, all of them or just one path's."""
         if path is None:
             self._faults.clear()
@@ -691,7 +691,7 @@ class CameraSimulator:
             self._faults = [f for f in self._faults if f.path != path]
         self._stream_drop_after = None
 
-    def _take_fault(self, path: str) -> Optional[_Fault]:
+    def _take_fault(self, path: str) -> _Fault | None:
         """Pop the next applicable fault for ``path``, if any."""
         for fault in self._faults:
             if not fault.spent and _path_matches(fault.path, path):
@@ -721,7 +721,7 @@ class CameraSimulator:
 
     # -- photos -----------------------------------------------------------
 
-    def listing(self, limit: Optional[int] = None) -> Tuple[Dict[str, Any], int]:
+    def listing(self, limit: int | None = None) -> tuple[dict[str, Any], int]:
         """``/v1/photos`` payload plus the number of files returned (which drives
         the latency model).
 
@@ -735,7 +735,7 @@ class CameraSimulator:
         looks like an off-by-one in the camera and is not worth imitating.)
         """
         remaining = None if not limit else limit
-        dirs: List[Dict[str, Any]] = []
+        dirs: list[dict[str, Any]] = []
         count = 0
         for d in self._dirs:
             files = d["files"]
@@ -747,7 +747,7 @@ class CameraSimulator:
         return {**_OK, "dirs": dirs}, count
 
     @property
-    def newest_on_card(self) -> Optional[str]:
+    def newest_on_card(self) -> str | None:
         """Newest file present, regardless of whether we captured it."""
         for d in reversed(self._dirs):
             if d["files"]:
@@ -758,13 +758,13 @@ class CameraSimulator:
         return any(d["name"] == dirname and filename in d["files"]
                    for d in self._dirs)
 
-    def info_for(self, path: str) -> Dict[str, Any]:
+    def info_for(self, path: str) -> dict[str, Any]:
         """Photo metadata: real captured fields with dir/file substituted."""
         dirname, _, filename = path.partition("/")
         return {**self._info_template, "captured": True,
                 "dir": dirname, "file": filename}
 
-    def latest_info(self) -> Dict[str, Any]:
+    def latest_info(self) -> dict[str, Any]:
         """``/v1/photos/latest/info``.
 
         Until this simulator captures something, the camera's answer is
@@ -803,26 +803,26 @@ class CameraSimulator:
         """The mode-dial position the simulator is emulating."""
         return str(self._params.get("exposureMode", "M"))
 
-    def params_lens(self) -> Dict[str, Any]:
+    def params_lens(self) -> dict[str, Any]:
         return {**_OK, "focusMode": self.focus_mode}
 
-    def variables_lens(self) -> Dict[str, Any]:
+    def variables_lens(self) -> dict[str, Any]:
         # In MF the camera reports focused=true (the ring is wherever you left
         # it); in AF it reports false until something drives focus.
         return {**_OK, "focused": self.focus_mode == "mf",
                 "focusCenters": [], "focusMode": self.focus_mode}
 
-    def params_camera(self) -> Dict[str, Any]:
+    def params_camera(self) -> dict[str, Any]:
         return {**_OK, **self._params}
 
-    def variables_camera(self) -> Dict[str, Any]:
+    def variables_camera(self) -> dict[str, Any]:
         """Lists from the capture, current values from live state, so the
         writability signal and the values never disagree."""
         merged = dict(self._variables)
         merged.update(self._params)
         return {**_OK, **merged}
 
-    def put_params(self, body: str) -> Tuple[Dict[str, Any], bool]:
+    def put_params(self, body: str) -> tuple[dict[str, Any], bool]:
         """Apply a ``PUT /v1/params/camera`` body.
 
         Returns ``(response, changed)``. Honours the list-emptiness signal: a
@@ -869,7 +869,7 @@ _UNFAULTABLE = {
 }
 
 
-def _check_endpoint_coverage(routes: List[Any]) -> None:
+def _check_endpoint_coverage(routes: list[Any]) -> None:
     """Fail loudly if the route table and :data:`ENDPOINTS` have drifted.
 
     Runs when the app is built rather than only in a test, so a route added
@@ -894,7 +894,7 @@ def _check_endpoint_coverage(routes: List[Any]) -> None:
             "table — " + "; ".join(problems))
 
 
-def create_app(sim: Optional[CameraSimulator] = None) -> Any:
+def create_app(sim: CameraSimulator | None = None) -> Any:
     """Build the ASGI app. ``sim`` defaults to a fresh :class:`CameraSimulator`;
     the app exposes it as ``app.state.simulator``."""
     _require()
@@ -907,7 +907,7 @@ def create_app(sim: Optional[CameraSimulator] = None) -> Any:
         if seconds > 0:
             await asyncio.sleep(seconds)
 
-    def _json(payload: Any, name: Optional[str] = None) -> Any:
+    def _json(payload: Any, name: str | None = None) -> Any:
         body = fixture_bytes(name) if name is not None else camera_json(payload)
         return Response(body, media_type=_JSON_CT, headers=dict(CAMERA_HEADERS))
 
@@ -938,7 +938,7 @@ def create_app(sim: Optional[CameraSimulator] = None) -> Any:
 
     async def photos(request) -> Any:
         raw = request.query_params.get("limit")
-        limit: Optional[int] = None
+        limit: int | None = None
         if raw is not None:
             try:
                 limit = int(raw)
@@ -978,7 +978,7 @@ def create_app(sim: Optional[CameraSimulator] = None) -> Any:
         await _delay(sim.timing.download_full_ms)
         return _binary(_dng_stub(), "application/octet-stream")
 
-    def _shoot_refusal(af: Optional[str]) -> Optional[str]:
+    def _shoot_refusal(af: str | None) -> str | None:
         """Why the camera would refuse this shutter release, if it would.
 
         All three are measured, and all three answer with the same 412 body:
@@ -1295,9 +1295,9 @@ class SimulatorServer:
         >>> server = SimulatorServer(timing=FAST)
     """
 
-    def __init__(self, sim: Optional[CameraSimulator] = None,
+    def __init__(self, sim: CameraSimulator | None = None,
                  host: str = "127.0.0.1", port: int = 0,
-                 timing: Optional[Timing] = None) -> None:
+                 timing: Timing | None = None) -> None:
         _require()
         if sim is None:
             sim = CameraSimulator(timing=timing)
@@ -1306,13 +1306,13 @@ class SimulatorServer:
         self.simulator = sim
         self.host = host
         self._requested_port = port
-        self._port: Optional[int] = None
+        self._port: int | None = None
         self._server: Any = None
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
 
     # -- lifecycle --------------------------------------------------------
 
-    def start(self, timeout: float = 15.0) -> "SimulatorServer":
+    def start(self, timeout: float = 15.0) -> SimulatorServer:
         app = create_app(self.simulator)
         config = uvicorn.Config(app, host=self.host, port=self._requested_port,
                                 log_level="warning", lifespan="off",
@@ -1356,7 +1356,7 @@ class SimulatorServer:
         self._thread = None
         self._server = None
 
-    def __enter__(self) -> "SimulatorServer":
+    def __enter__(self) -> SimulatorServer:
         return self.start()
 
     def __exit__(self, *exc: Any) -> None:
@@ -1393,7 +1393,7 @@ def run_simulator(host: str = "127.0.0.1", port: int = 8080) -> None:
                 lifespan="off", **_UVICORN_HEADER_OPTS)
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     import argparse
 
     p = argparse.ArgumentParser(

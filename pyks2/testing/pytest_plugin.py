@@ -27,13 +27,13 @@ installed without the extra can never break an unrelated pytest run.
 
 from __future__ import annotations
 
-from typing import Iterator
+from collections.abc import Iterator
 
 import pytest
 
 
 @pytest.fixture
-def ks2_simulator() -> Iterator["object"]:
+def ks2_simulator() -> Iterator[object]:
     """A K-S2 simulator on an ephemeral loopback port, with no added latency."""
     from .simulator import FAST, SimulatorServer
 
@@ -46,7 +46,7 @@ def ks2_simulator() -> Iterator["object"]:
 
 
 @pytest.fixture
-def ks2_simulator_realistic() -> Iterator["object"]:
+def ks2_simulator_realistic() -> Iterator[object]:
     """As ``ks2_simulator``, but reproducing the camera's measured latencies.
 
     Slower by design — a capture takes ~2 s to report, as on the real body.

@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
-def _parse_ks2_datetime(s: Optional[str]) -> Optional[datetime]:
+def _parse_ks2_datetime(s: str | None) -> datetime | None:
     """Parse either datetime format the camera emits.
 
     - ISO-8601 from /v1/ping:            2026-07-15T11:43:15
@@ -39,7 +39,7 @@ def _parse_ks2_datetime(s: Optional[str]) -> Optional[datetime]:
     return None
 
 
-def _f(v: Any) -> Optional[float]:
+def _f(v: Any) -> float | None:
     """Tolerant float parse for wobbly numeric strings ('0', '0.0', '-0.7')."""
     if v is None or v == "":
         return None
@@ -52,18 +52,18 @@ def _f(v: Any) -> Optional[float]:
 @dataclass
 class DeviceInfo:
     """Identity + hardware state (from constants/device + status/device)."""
-    model: Optional[str] = None
-    firmware_version: Optional[str] = None
-    mac_address: Optional[str] = None
-    serial_no: Optional[str] = None
-    battery: Optional[int] = None
-    ssid: Optional[str] = None
-    channel: Optional[str] = None
-    storages: List[Dict[str, Any]] = field(default_factory=list)
-    raw: Dict[str, Any] = field(default_factory=dict)
+    model: str | None = None
+    firmware_version: str | None = None
+    mac_address: str | None = None
+    serial_no: str | None = None
+    battery: int | None = None
+    ssid: str | None = None
+    channel: str | None = None
+    storages: list[dict[str, Any]] = field(default_factory=list)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "DeviceInfo":
+    def from_dict(cls, d: dict[str, Any]) -> DeviceInfo:
         return cls(
             model=d.get("model"),
             firmware_version=d.get("firmwareVersion"),
@@ -80,21 +80,21 @@ class DeviceInfo:
 @dataclass
 class CameraParams:
     """Current camera settings (from params/camera)."""
-    av: Optional[str] = None
-    tv: Optional[str] = None
-    sv: Optional[str] = None
-    xv: Optional[str] = None
-    wb_mode: Optional[str] = None
-    shoot_mode: Optional[str] = None
-    exposure_mode: Optional[str] = None
-    still_size: Optional[str] = None
-    movie_size: Optional[str] = None
-    effect: Optional[str] = None
-    filter: Optional[str] = None
-    raw: Dict[str, Any] = field(default_factory=dict)
+    av: str | None = None
+    tv: str | None = None
+    sv: str | None = None
+    xv: str | None = None
+    wb_mode: str | None = None
+    shoot_mode: str | None = None
+    exposure_mode: str | None = None
+    still_size: str | None = None
+    movie_size: str | None = None
+    effect: str | None = None
+    filter: str | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "CameraParams":
+    def from_dict(cls, d: dict[str, Any]) -> CameraParams:
         return cls(
             av=d.get("av"), tv=d.get("tv"), sv=d.get("sv"), xv=d.get("xv"),
             wb_mode=d.get("WBMode"), shoot_mode=d.get("shootMode"),
@@ -104,7 +104,7 @@ class CameraParams:
         )
 
     @property
-    def xv_value(self) -> Optional[float]:
+    def xv_value(self) -> float | None:
         """Exposure compensation as a float (tolerant of '0'/'0.0'/'-0.7')."""
         return _f(self.xv)
 
@@ -115,23 +115,23 @@ class CameraConstants:
 
     NOTE: ``av_list`` is dynamic on the live camera — re-fetch after changes.
     """
-    av_list: List[str] = field(default_factory=list)
-    tv_list: List[str] = field(default_factory=list)
-    sv_list: List[str] = field(default_factory=list)
-    xv_list: List[str] = field(default_factory=list)
-    wb_mode_list: List[str] = field(default_factory=list)
-    shoot_mode_list: List[str] = field(default_factory=list)
-    exposure_mode_list: List[str] = field(default_factory=list)
-    still_size_list: List[str] = field(default_factory=list)
-    reso_list: List[str] = field(default_factory=list)
-    movie_reso_list: List[str] = field(default_factory=list)
-    movie_size_list: List[str] = field(default_factory=list)
-    effect_list: List[str] = field(default_factory=list)
-    filter_list: List[str] = field(default_factory=list)
-    raw: Dict[str, Any] = field(default_factory=dict)
+    av_list: list[str] = field(default_factory=list)
+    tv_list: list[str] = field(default_factory=list)
+    sv_list: list[str] = field(default_factory=list)
+    xv_list: list[str] = field(default_factory=list)
+    wb_mode_list: list[str] = field(default_factory=list)
+    shoot_mode_list: list[str] = field(default_factory=list)
+    exposure_mode_list: list[str] = field(default_factory=list)
+    still_size_list: list[str] = field(default_factory=list)
+    reso_list: list[str] = field(default_factory=list)
+    movie_reso_list: list[str] = field(default_factory=list)
+    movie_size_list: list[str] = field(default_factory=list)
+    effect_list: list[str] = field(default_factory=list)
+    filter_list: list[str] = field(default_factory=list)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "CameraConstants":
+    def from_dict(cls, d: dict[str, Any]) -> CameraConstants:
         return cls(
             av_list=d.get("avList", []) or [],
             tv_list=d.get("tvList", []) or [],
@@ -182,13 +182,13 @@ class CameraConstants:
 @dataclass
 class LensState:
     """Focus state (from params/lens or status/lens)."""
-    focused: Optional[bool] = None
-    focus_centers: List[Any] = field(default_factory=list)
-    focus_mode: Optional[str] = None  # 'af' or 'mf' — read-only (physical lever)
-    raw: Dict[str, Any] = field(default_factory=dict)
+    focused: bool | None = None
+    focus_centers: list[Any] = field(default_factory=list)
+    focus_mode: str | None = None  # 'af' or 'mf' — read-only (physical lever)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "LensState":
+    def from_dict(cls, d: dict[str, Any]) -> LensState:
         return cls(
             focused=d.get("focused"),
             focus_centers=d.get("focusCenters", []) or [],
@@ -200,21 +200,21 @@ class LensState:
 @dataclass
 class PhotoInfo:
     """Per-image metadata (from photos/.../info or latest/info)."""
-    dir: Optional[str] = None
-    file: Optional[str] = None
-    captured: Optional[bool] = None
-    av: Optional[str] = None
-    tv: Optional[str] = None
-    sv: Optional[str] = None
-    xv: Optional[str] = None
-    orientation: Optional[int] = None
-    camera_model: Optional[str] = None
-    latlng: Optional[str] = None
-    datetime_raw: Optional[str] = None
-    raw: Dict[str, Any] = field(default_factory=dict)
+    dir: str | None = None
+    file: str | None = None
+    captured: bool | None = None
+    av: str | None = None
+    tv: str | None = None
+    sv: str | None = None
+    xv: str | None = None
+    orientation: int | None = None
+    camera_model: str | None = None
+    latlng: str | None = None
+    datetime_raw: str | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "PhotoInfo":
+    def from_dict(cls, d: dict[str, Any]) -> PhotoInfo:
         return cls(
             dir=d.get("dir"), file=d.get("file"), captured=d.get("captured"),
             av=d.get("av"), tv=d.get("tv"), sv=d.get("sv"), xv=d.get("xv"),
@@ -223,13 +223,13 @@ class PhotoInfo:
         )
 
     @property
-    def path(self) -> Optional[str]:
+    def path(self) -> str | None:
         if self.dir and self.file:
             return f"{self.dir}/{self.file}"
         return None
 
     @property
-    def datetime(self) -> Optional[datetime]:
+    def datetime(self) -> datetime | None:
         return _parse_ks2_datetime(self.datetime_raw)
 
 
@@ -247,12 +247,12 @@ class PhotoEntry:
 @dataclass
 class PhotoListing:
     """Result of GET /v1/photos — directories and their files."""
-    entries: List[PhotoEntry] = field(default_factory=list)
-    raw: Dict[str, Any] = field(default_factory=dict)
+    entries: list[PhotoEntry] = field(default_factory=list)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "PhotoListing":
-        entries: List[PhotoEntry] = []
+    def from_dict(cls, d: dict[str, Any]) -> PhotoListing:
+        entries: list[PhotoEntry] = []
         for dobj in d.get("dirs", []) or []:
             name = dobj.get("name", "")
             for f in dobj.get("files", []) or []:
@@ -273,13 +273,13 @@ class ShootResult:
     Remember: ``captured`` is always False here — capture is async. Use the
     client's wait_for_capture()/events to detect the written file.
     """
-    focused: Optional[bool] = None
-    focus_centers: List[Any] = field(default_factory=list)
+    focused: bool | None = None
+    focus_centers: list[Any] = field(default_factory=list)
     captured: bool = False
-    raw: Dict[str, Any] = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "ShootResult":
+    def from_dict(cls, d: dict[str, Any]) -> ShootResult:
         return cls(
             focused=d.get("focused"),
             focus_centers=d.get("focusCenters", []) or [],
@@ -292,10 +292,10 @@ class ShootResult:
 class ChangeEvent:
     """A /v1/changes WebSocket event."""
     changed: str  # 'camera' or 'storage'
-    raw: Dict[str, Any] = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "ChangeEvent":
+    def from_dict(cls, d: dict[str, Any]) -> ChangeEvent:
         return cls(changed=d.get("changed", ""), raw=d)
 
     @property
