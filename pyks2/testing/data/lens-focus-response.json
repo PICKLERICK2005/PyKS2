@@ -1,6 +1,4 @@
-{
-  "errCode": 200,
-  "errMsg": "OK",
-  "focused": true,
-  "focusCenters": []
-}
+{"errCode": 200,
+ "errMsg": "OK",
+ "focused": true,
+ "focusCenters": []}
