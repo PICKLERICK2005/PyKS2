@@ -3,6 +3,73 @@
 All notable changes to **pyks2** are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.0b1] — 2026-07-29
+
+A prerelease so the new simulator can soak before its API is frozen. Beta
+because that public surface may still change, **not** because anything is
+unverified — the simulator replays hardware-captured wire data throughout.
+
+### Added
+- **A shipped camera simulator (`pyks2[testing]`)**: `pyks2.testing` serves a
+  protocol-level fake K-S2 over a real socket, so the *actual* pyks2 client —
+  sync and async — can be driven end to end with no camera on the bench. This
+  is deliberately **public, supported surface**, not internal test scaffolding:
+  downstream libraries import it to run their own integration tests against a
+  faithful camera instead of mocking pyks2 out.
+
+  ```python
+  from pyks2.testing import SimulatorServer
+
+  with SimulatorServer() as server:
+      cam = server.client()          # a real K_S2_WiFi
+      info = cam.capture(af="off")
+  ```
+
+  Also available as `python -m pyks2.testing.simulator --port 8080`, and as a
+  `ks2_simulator` pytest fixture on an ephemeral port, registered through a
+  `pytest11` entry point so downstream suites get it just by installing the
+  extra. Covers `/v1/props`, `/v1/params/camera` (GET + PUT), `/v1/photos` and
+  photo download, `POST /v1/camera/shoot`, the `/v1/changes` WebSocket and the
+  `/v1/liveview` MJPEG stream, plus the ping/apis/constants/variables/status
+  reads.
+
+  Every response body is **replayed from bytes captured off a physical K-S2**
+  (firmware 01.10) and shipped inside the package as `pyks2/testing/data/`, so
+  it works from a plain `pip install` rather than only in a git checkout. It
+  reproduces the verified protocol behaviours rather than an idealised API:
+  `errCode` in the body with HTTP 200 (Law 1), `/v1/photos` oldest-first with
+  `?limit` as a head-limit only, the empty-list writability signal (a write to
+  a camera-controlled value returns 200 and is silently ignored), exactly one
+  `storage` event per capture and a `camera` event per settings write, and the
+  412/200 gating on `/v1/liveview/zoom`. State is intentionally shallow: only a
+  capture mutates anything, making a new file appear and firing the matching
+  event so a shoot → new-file → download sequence works. The two payloads that
+  are not captured bytes (`?size=view`, `?size=full`) are documented in
+  `pyks2/testing/data/PROVENANCE.md`.
+- **Tests driving the real client against the simulator** over loopback, for
+  both transports — `events_async()` and `iter_liveview_frames_async()`
+  included — covering the requests/httpx/websockets transports and the MJPEG
+  and event parsers that the existing fake-transport tests cannot reach.
+
+### Fixed
+- **`K_S2_WiFi` now accepts an address with a port** (`"127.0.0.1:8080"`).
+  `ip` was interpreted inconsistently: HTTP interpolated it straight into the
+  URL, so it could carry a port, but the `/v1/changes` clients needed host and
+  port separately — the async one built `ws://host:8080:80/v1/changes` and the
+  sync one passed the whole string to a socket connect. There was therefore no
+  working way to point the event stream anywhere but port 80. `.host` and
+  `.port` are now parsed once and used for the WebSocket. Invisible against the
+  camera, which is always `192.168.0.1:80`; found immediately by pointing the
+  client at the simulator.
+
+### Packaging
+- New `testing` extra (`starlette`, `uvicorn`, `pytest`, plus `pyks2[async]`).
+  `dev` now includes it. `import pyks2` still works with no extras installed;
+  only building or running the simulator raises, and the error names the extra.
+- `pyks2.testing` added to the distribution, with its `data/` declared as
+  package-data so the fixtures land in the **wheel** as well as the sdist.
+- CI installs `[dev,async,testing]`.
+
 ## [1.1.0] — 2026-07-29
 
 Three additive features on top of 1.0.0, all now hardware-verified. All are

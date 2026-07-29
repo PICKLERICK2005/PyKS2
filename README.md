@@ -63,6 +63,7 @@ pyks2/          the library (camera-only HTTP client, typed models, WS events)
   ├─ errors.py       typed exceptions (errCode-aware)
   ├─ _mjpeg.py       shared MJPEG frame parser (sync + async liveview)
   ├─ async_client.py optional async streaming (pyks2[async])
+  ├─ testing/        shipped camera simulator (pyks2[testing])
   └─ cli.py          the command-line interface
 docs/           the reverse-engineering write-up (GitHub Pages source)
   ├─ PROTOCOL.md     the API dissection
@@ -147,6 +148,46 @@ async for jpeg in cam.iter_liveview_frames_async(max_frames=10):
 Both share their parsing with the sync path — MJPEG framing via
 `pyks2._mjpeg`, event decoding via `events._payload_to_event` — so there is no
 duplicated protocol logic between sync and async.
+
+---
+
+## Camera simulator (for tests)
+
+`pip install pyks2[testing]` ships a protocol-level fake K-S2 that serves over a
+real socket, so you can drive the **real** client with no camera on the bench.
+Every response is replayed from bytes captured off the physical camera, and it
+reproduces the awkward parts of the protocol on purpose — `errCode` in the body,
+`?limit` as a head-limit only, the empty-list writability signal, one `storage`
+event per capture.
+
+```python
+from pyks2.testing import SimulatorServer
+
+with SimulatorServer() as server:
+    cam = server.client()             # a real K_S2_WiFi, pointed at the fake
+    info = cam.capture(af="off")      # shoot -> new file appears -> download
+    cam.download(info.path, "shot.jpg", size="view")
+```
+
+Or run it standalone and point anything at it:
+
+```bash
+python -m pyks2.testing.simulator --port 8080
+```
+
+In a test suite, the `ks2_simulator` fixture is registered automatically by
+installing the extra — no `conftest.py` wiring:
+
+```python
+def test_capture(ks2_simulator):
+    cam = ks2_simulator.client()      # ephemeral port, fresh camera state
+    assert cam.capture(af="off").path
+```
+
+This is supported public surface, not internal scaffolding: libraries built on
+pyks2 use it to run their integration tests against a faithful camera rather
+than mocking pyks2 out. Only a capture mutates state — it is a protocol
+simulator, not a camera emulator.
 
 ---
 
