@@ -26,12 +26,28 @@ response below. It is both human-readable and machine-readable (it drives the
 | `photos-listing.json` | `GET /v1/photos` | Card enumeration structure |
 | `photos-latest-info.json` | `GET /v1/photos/latest/info` | Latest shot metadata |
 | `camera-shoot-response.json` | `POST /v1/camera/shoot` | Capture response |
-| `changes-events.jsonl` | `WS /v1/changes` | Event stream samples |
+| `changes-events.jsonl` | `WS /v1/changes` | Event stream samples (both `changed` kinds) |
+| `changes-capture-sequence.jsonl` | `WS /v1/changes` | **Complete** message sequence for one capture: exactly one `storage` frame, no trailing `camera` frame (20 s listen window) |
+| `liveview-frame-raw.bin` | `GET /v1/liveview` | One raw MJPEG part, boundary + part headers intact (`--boundarydonotcross`, `Content-type: image/jpg`), 720×480 JPEG |
 | `error-400-bad-request.json` | (various) | `errCode` 400 body shape |
 | `error-412-precondition.json` | `shoot/start`,`finish` (non-bulb) | `errCode` 412 body shape |
 | `constants.json` / `params.json` | `GET /v1/constants` / `/v1/params` (bare) | Merged roots: constants+device identity; params+lens+device |
 | `lens-focus-response.json` | `POST /v1/lens/focus` | AF trigger success (focused:true) |
 | `camera-shoot-start-bulb.json` / `camera-shoot-finish-bulb.json` | `POST /v1/camera/shoot/start` / `finish` | Bulb exposure open/close (dial=B) |
+
+## Provenance
+
+Everything here came off a physical Pentax K-S2 (firmware `01.10`, serial
+`4477116`) over its own WiFi AP. `changes-capture-sequence.jsonl` and
+`liveview-frame-raw.bin` were captured on **2026-07-29** during the async-path
+hardware verification recorded in `../docs/VERIFICATION.md`; the rest predate
+it. `liveview-frame-raw.bin` is binary, not JSON — it is the unmodified bytes of
+one multipart part, kept intact so a mock server can replay real framing rather
+than a reconstruction.
+
+`/v1/props`, `/v1/photos` and `/v1/photos/latest/info` were re-captured in that
+same session and matched the existing `props.json`, `photos-listing.json` and
+`photos-latest-info.json` key-for-key, so they were not duplicated.
 
 ## Two protocol laws to remember
 

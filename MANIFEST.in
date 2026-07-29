@@ -1,5 +1,5 @@
 include CHANGELOG.md
 include LICENSE
 recursive-include docs *.md *.yml
-recursive-include examples *.json *.jsonl *.md
+recursive-include examples *.json *.jsonl *.md *.bin
 recursive-include tests *.py
