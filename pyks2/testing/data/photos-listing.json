@@ -1,0 +1,10 @@
+{
+  "errCode": 200,
+  "errMsg": "OK",
+  "dirs": [
+    {
+      "name": "100_1507",
+      "files": [ "IMGP1971.DNG", "IMGP1972.DNG", "IMGP1973.DNG", "IMGP1974.DNG" ]
+    }
+  ]
+}

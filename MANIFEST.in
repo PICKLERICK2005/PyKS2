@@ -3,3 +3,6 @@ include LICENSE
 recursive-include docs *.md *.yml
 recursive-include examples *.json *.jsonl *.md *.bin
 recursive-include tests *.py
+# The simulator's serving data. Also declared as package-data in pyproject so
+# it lands in the wheel, not just the sdist.
+recursive-include pyks2/testing/data *.json *.jsonl *.md *.bin

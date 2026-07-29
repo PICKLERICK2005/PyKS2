@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyks2"
-version = "1.1.0"
+version = "1.2.0b1"
 description = "A Python client and CLI for the Pentax K-S2's undocumented WiFi HTTP API, plus a reverse-engineering write-up. (Web GUI planned.)"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -32,10 +32,19 @@ dependencies = [
 
 [project.optional-dependencies]
 async = ["httpx>=0.24", "websockets>=11"]
-dev = ["pytest>=7", "mypy>=1.0", "ruff>=0.4", "pyks2[async]"]
+# The shipped camera simulator (pyks2.testing). starlette + uvicorn are the
+# ASGI app and the real socket it needs; requests/websockets are what the
+# pyks2 client itself uses to talk to it.
+testing = ["starlette>=0.37", "uvicorn>=0.29", "pytest>=7", "pyks2[async]"]
+dev = ["pytest>=7", "mypy>=1.0", "ruff>=0.4", "pyks2[async]", "pyks2[testing]"]
 
 [project.scripts]
 pyks2 = "pyks2.cli:main"
+
+[project.entry-points.pytest11]
+# Makes the ks2_simulator fixture available to downstream test suites as soon
+# as pyks2[testing] is installed, with no pytest_plugins wiring.
+pyks2_simulator = "pyks2.testing.pytest_plugin"
 
 [project.urls]
 Homepage = "https://github.com/PICKLERICK2005/pyks2"
@@ -45,7 +54,12 @@ Issues = "https://github.com/PICKLERICK2005/pyks2/issues"
 Changelog = "https://github.com/PICKLERICK2005/pyks2/blob/main/CHANGELOG.md"
 
 [tool.setuptools]
-packages = ["pyks2"]
+packages = ["pyks2", "pyks2.testing"]
+
+[tool.setuptools.package-data]
+# The simulator serves these at runtime, so they must ship in the wheel too —
+# MANIFEST.in alone only covers the sdist.
+"pyks2.testing" = ["data/*.json", "data/*.jsonl", "data/*.bin", "data/*.md"]
 
 [tool.ruff]
 line-length = 88
