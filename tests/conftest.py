@@ -26,6 +26,7 @@ class _Resp:
         self._b = body if isinstance(body, bytes) else body.encode()
         self.status_code = status
         self.headers = _Headers({"Content-Type": ctype})
+        self.closed = False
 
     @property
     def text(self):
@@ -40,7 +41,17 @@ class _Resp:
             yield self._b[i:i + n]
 
     def close(self):
-        pass
+        self.closed = True
+
+
+# A 3-frame MJPEG multipart body, boundary text included (the parser ignores
+# it and only scans for SOI/EOI, same as the real camera's stream).
+LIVEVIEW_FRAMES = [b"\xff\xd8" + b"frame1" + b"\xff\xd9",
+                   b"\xff\xd8" + b"frame2" + b"\xff\xd9",
+                   b"\xff\xd8" + b"frame3" + b"\xff\xd9"]
+LIVEVIEW_BODY = b"".join(
+    b"--boundarydonotcross\r\nContent-Type: image/jpeg\r\n\r\n" + f + b"\r\n"
+    for f in LIVEVIEW_FRAMES)
 
 
 class _Session:
@@ -83,6 +94,9 @@ class _Session:
             return _Resp('{"errCode":200,"errMsg":"OK"}')
         if p == "/v1/liveview/zoom":
             return _Resp('{"errCode":200,"errMsg":"OK"}')
+        if p == "/v1/liveview":
+            return _Resp(LIVEVIEW_BODY,
+                         ctype="multipart/x-mixed-replace; boundary=--boundarydonotcross")
         if p == "/v1/lens/focus":
             return _Resp('{"errCode":200,"errMsg":"OK","focused":true,"focusCenters":[]}')
         if p == "/v1/photos" or p.startswith("/v1/photos?"):

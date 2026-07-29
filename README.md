@@ -61,6 +61,8 @@ pyks2/          the library (camera-only HTTP client, typed models, WS events)
   ├─ events.py       /v1/changes WebSocket client (stdlib, zero-dep)
   ├─ constants.py    endpoints + capability enums
   ├─ errors.py       typed exceptions (errCode-aware)
+  ├─ _mjpeg.py       shared MJPEG frame parser (sync + async liveview)
+  ├─ async_client.py optional async streaming (pyks2[async])
   └─ cli.py          the command-line interface
 docs/           the reverse-engineering write-up (GitHub Pages source)
   ├─ PROTOCOL.md     the API dissection
@@ -73,7 +75,7 @@ examples/       real captured JSON responses + the machine-readable API referenc
 ## Quick start
 
 ```bash
-pip install pyks2            # or: pip install -e .  from a clone
+pip install pyks2                     # or: pip install -e .  from a clone
 ```
 
 Join the camera's WiFi (`PENTAX_XXXXXX`), then:
@@ -91,6 +93,11 @@ print("captured:", info.path)
 
 # change settings (validated by the camera; illegal values raise)
 cam.set_camera_params(av="8.0", sv="400")
+
+# ...or use the typed accessors, which also catch camera-controlled fields
+# (e.g. av in Sv mode) and raise instead of silently no-opping
+cam.set_iso(400)
+cam.set_aperture(8.0)
 
 # browse the card
 for photo in cam.list_photos():
@@ -111,9 +118,35 @@ with cam.events() as ev:              # /v1/changes WebSocket
 Live view (MJPEG):
 
 ```python
-for jpeg in cam.iter_liveview_frames(max_frames=1):
-    open("frame.jpg", "wb").write(jpeg)
+with cam.liveview() as stream:       # closes the stream (drops the mirror)
+    for jpeg in stream:               # on exit, even if you break out early
+        open("frame.jpg", "wb").write(jpeg)
+        break
 ```
+
+---
+
+## Async streaming
+
+`pip install pyks2[async]` pulls in `httpx`/`websockets` for async equivalents
+of the event stream and live view. Hardware-verified against a physical K-S2 —
+see [VERIFICATION.md](docs/VERIFICATION.md).
+
+```python
+async with cam.events_async() as ev:
+    async for change in ev:
+        if change.is_storage:
+            print("captured:", cam.latest_info().path)
+```
+
+```python
+async for jpeg in cam.iter_liveview_frames_async(max_frames=10):
+    ...                               # 720x480 JPEGs; mirror drops on close
+```
+
+Both share their parsing with the sync path — MJPEG framing via
+`pyks2._mjpeg`, event decoding via `events._payload_to_event` — so there is no
+duplicated protocol logic between sync and async.
 
 ---
 
@@ -181,8 +214,8 @@ Start with **[docs/PROTOCOL.md](https://picklerick2005.github.io/PyKS2/PROTOCOL.
 ```bash
 git clone https://github.com/PICKLERICK2005/pyks2.git
 cd pyks2
-pip install -e ".[dev]"     # installs pytest, mypy, ruff
-pytest -q                    # 37 tests, no camera required
+pip install -e ".[dev]"     # installs pytest, mypy, ruff (+ the async extra)
+pytest -q                    # 70 tests, no camera required
 ```
 
 The test suite runs entirely against captured fixtures (`examples/*.json`) via a

@@ -21,7 +21,7 @@ Event-driven (no polling):
 
 from __future__ import annotations
 
-from .client import K_S2_WiFi
+from .client import K_S2_WiFi, LiveviewSession
 from .errors import (
     KS2APIError,
     KS2ConnectionError,
@@ -42,13 +42,14 @@ from .models import (
     ShootResult,
 )
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __author__ = "Jamal El Siblany (pickle)"
 __email__ = "jamalsiblani@gmail.com"
 __url__ = "https://github.com/PICKLERICK2005/pyks2"
 
 __all__ = [
     "K_S2_WiFi",
+    "LiveviewSession",
     "ChangesClient",
     # models
     "CameraParams",
