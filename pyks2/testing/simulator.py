@@ -81,6 +81,7 @@ __all__ = [
     "create_app",
     "run_simulator",
     "camera_json",
+    "ERROR_BODIES",
     "MJPEG_CONTENT_TYPE",
     "CAMERA_HEADERS",
 ]
@@ -236,10 +237,21 @@ _STATIC: Dict[str, str] = {
     "/v1/props/lens": "props-lens.json",
     "/v1/props/liveview": "props-liveview.json",
     "/v1/props/device": "props-device.json",
-    "/v1/params/lens": "params-lens.json",
+    # bare group roots — the client's _get_group can ask for these
+    "/v1/constants": "constants.json",
+    "/v1/params": "params.json",
+    "/v1/variables": "variables.json",
+    "/v1/status": "status.json",
+    # NB /v1/params/lens and /v1/variables/lens are NOT here: they carry
+    # focusMode, so they are served from state instead.
+    "/v1/params/liveview": "params-liveview.json",
     "/v1/params/device": "params-device.json",
     "/v1/constants/camera": "constants-camera.json",
+    "/v1/constants/lens": "constants-lens.json",
+    "/v1/constants/liveview": "constants-liveview.json",
     "/v1/constants/device": "constants-device.json",
+    "/v1/variables/liveview": "variables-liveview.json",
+    "/v1/variables/device": "variables-device.json",
     "/v1/status/camera": "status-camera.json",
     "/v1/status/lens": "status-lens.json",
     "/v1/status/liveview": "status-liveview.json",
@@ -251,6 +263,36 @@ _STATIC: Dict[str, str] = {
 _LIST_FOR = {"av": "avList", "tv": "tvList", "sv": "svList", "xv": "xvList"}
 
 _OK = {"errCode": 200, "errMsg": "OK"}
+
+#: Error responses available to :meth:`CameraSimulator.fail`, each one a real
+#: captured body. There is deliberately no "card full" here: that failure was
+#: never captured (the test card had thousands of frames free) and inventing a
+#: body would break the rule that everything on the wire is real.
+ERROR_BODIES: Dict[str, str] = {
+    "precondition": "error-412-precondition.json",   # errCode 412
+    "bad_request": "error-400-bad-request.json",     # errCode 400
+    "not_found": "error-404-not-found.json",         # errCode 404
+    "unhandled_method": "unhandled-method.html",     # real HTTP 400 + HTML
+}
+
+
+@dataclass
+class _Fault:
+    """One queued misbehaviour for a path. Internal; created via the public
+    ``fail``/``drop``/``delay`` methods."""
+    path: str
+    kind: str                      # "fail" | "drop" | "delay"
+    error: Optional[str] = None    # key into ERROR_BODIES, for kind="fail"
+    seconds: float = 0.0           # for kind="delay"
+    remaining: Optional[int] = 1   # None means "every time"
+
+    def consume(self) -> None:
+        if self.remaining is not None:
+            self.remaining -= 1
+
+    @property
+    def spent(self) -> bool:
+        return self.remaining is not None and self.remaining <= 0
 
 
 def _err(code: int, msg: str) -> Dict[str, Any]:
@@ -329,6 +371,13 @@ class CameraSimulator:
         #: reports no latest until it takes a picture, however full the card is.
         self.latest_captured: Optional[str] = None
 
+        #: ``"af"`` or ``"mf"``. In MF the camera refuses ``af=auto`` with a 412
+        #: (measured), which is the classic "why won't it fire over WiFi" trap.
+        self.focus_mode: str = fixture_json("params-lens.json").get(
+            "focusMode", "af")
+        #: True between a successful ``shoot/start`` and its ``shoot/finish``
+        self.bulb_open: bool = False
+
         # Real event payloads, keyed by their `changed` value, so broadcasts
         # replay captured bytes rather than re-serialised JSON.
         self._events: Dict[str, str] = {}
@@ -350,10 +399,187 @@ class CameraSimulator:
 
         #: number of live view streams currently open (gates /v1/liveview/zoom)
         self.active_streams = 0
+        #: bumped per live view request; only the newest generation keeps
+        #: streaming, matching the camera's one-stream-at-a-time behaviour
+        self._stream_generation = 0
         #: every payload broadcast, in order — handy for assertions
         self.emitted: List[str] = []
         self._queues: List[Any] = []
         self._lock = threading.Lock()
+        #: strong references to in-flight background tasks
+        self._pending: set = set()
+        #: why the last shutter release was refused, if it was — for assertions
+        self.last_refusal: Optional[str] = None
+        #: queued faults, see fail()/drop()/delay()
+        self._faults: List[_Fault] = []
+        #: kill the live view stream after N frames, see drop_stream_after()
+        self._stream_drop_after: Optional[int] = None
+
+    # -- public configuration ---------------------------------------------
+    #
+    # This is the supported way to shape the camera's state. It exists so that
+    # nothing has to reach into private attributes: earlier versions documented
+    # poking ``sim._variables`` to exercise the writability path, which is not
+    # an API anyone should have to rely on.
+
+    #: Mode-dial positions with a real captured capability set behind them.
+    #: "M" is the default state; "B" was captured with the dial on Bulb.
+    EXPOSURE_MODE_FIXTURES = {
+        "M": ("params-camera.json", "variables-camera.json"),
+        "B": ("params-camera-bulb.json", "variables-camera-bulb.json"),
+    }
+
+    def set_exposure_mode(self, mode: str) -> None:
+        """Emulate a mode-dial position.
+
+        Only positions with a real capture behind them are accepted, because the
+        capability lists differ per mode and inventing them would turn the
+        writability signal into fiction. ``"B"`` loads the genuine Bulb capture,
+        in which ``tvList`` and ``xvList`` are empty — the camera owns shutter
+        and exposure compensation there — and gates ``shoot`` behind
+        ``shoot/start``/``shoot/finish``.
+
+        Raises:
+            ValueError: for a mode with no captured capability set. Shape
+                writability with :meth:`set_camera_controlled` instead of
+                inventing a dial position.
+        """
+        try:
+            params_fx, vars_fx = self.EXPOSURE_MODE_FIXTURES[mode]
+        except KeyError:
+            raise ValueError(
+                f"no captured capability set for exposureMode={mode!r}; "
+                f"captured modes: {sorted(self.EXPOSURE_MODE_FIXTURES)}. Shape "
+                f"writability with set_camera_controlled() instead of faking a "
+                f"mode."
+            ) from None
+        self._params = fixture_json(params_fx)
+        self._variables = fixture_json(vars_fx)
+        self._params["exposureMode"] = mode
+
+    def set_focus_mode(self, mode: str) -> None:
+        """``"af"`` or ``"mf"``. In MF the camera refuses ``af=auto`` with a 412
+        and ``/v1/lens/focus`` fails — both measured."""
+        if mode not in ("af", "mf"):
+            raise ValueError(f"focus mode must be 'af' or 'mf', got {mode!r}")
+        self.focus_mode = mode
+
+    #: the four exposure values whose list emptiness signals writability
+    WRITABILITY_FIELDS = ("av", "tv", "sv", "xv")
+
+    def set_camera_controlled(self, *fields: str) -> None:
+        """Make ``av``/``tv``/``sv``/``xv`` camera-controlled by emptying its
+        capability list, which is exactly how the camera signals it.
+
+        A write to such a field then returns 200 and is silently ignored, and
+        the typed accessors (``set_iso`` and friends) raise
+        ``KS2UnsupportedError`` instead of sending it (PROTOCOL.md §6.5).
+
+            >>> sim.set_camera_controlled("sv")     # ISO now camera-controlled
+        """
+        for field in fields:
+            if field not in self.WRITABILITY_FIELDS:
+                raise ValueError(
+                    f"{field!r} has no writability list; expected one of "
+                    f"{self.WRITABILITY_FIELDS}")
+            self._variables[f"{field}List"] = []
+
+    def set_user_controlled(self, *fields: str) -> None:
+        """Restore a field's captured capability list, making it writable."""
+        _, vars_fx = self.EXPOSURE_MODE_FIXTURES["M"]
+        captured = fixture_json(vars_fx)
+        for field in fields:
+            if field not in self.WRITABILITY_FIELDS:
+                raise ValueError(
+                    f"{field!r} has no writability list; expected one of "
+                    f"{self.WRITABILITY_FIELDS}")
+            self._variables[f"{field}List"] = captured[f"{field}List"]
+
+    def writable(self, field: str) -> bool:
+        """Whether ``field`` is user-settable right now."""
+        return bool(self._variables.get(f"{field}List"))
+
+    def seed_photos(self, dirs: Dict[str, List[str]]) -> None:
+        """Replace the card's contents.
+
+        ``dirs`` maps directory name to filenames, oldest first, e.g.
+        ``{"100_0101": ["IMGP0001.DNG"]}``. Ordering is preserved verbatim —
+        the camera lists oldest-first and does not sort, so a RAW+JPEG pair can
+        legitimately appear .JPG before .DNG.
+
+        Resets the session's "latest captured" too, matching a fresh power-on.
+        """
+        self._dirs = [{"name": name, "files": list(files)}
+                      for name, files in dirs.items()]
+        self.latest_captured = None
+
+    def add_photo(self, dirname: str, filename: str) -> None:
+        """Append one file to the card without pretending it was captured."""
+        for d in self._dirs:
+            if d["name"] == dirname:
+                d["files"].append(filename)
+                return
+        self._dirs.append({"name": dirname, "files": [filename]})
+
+    # -- public fault injection -------------------------------------------
+
+    def fail(self, path: str, error: str = "precondition", *,
+             times: Optional[int] = 1) -> None:
+        """Make ``path`` answer with a real captured error body.
+
+        Args:
+            path: exact endpoint path, e.g. ``"/v1/camera/shoot"``. The
+                templates live in ``pyks2.constants.EP``.
+            error: a key of :data:`ERROR_BODIES` — ``"precondition"`` (412),
+                ``"bad_request"`` (400), ``"not_found"`` (404), or
+                ``"unhandled_method"`` (a real HTTP 400 with an HTML body).
+            times: how many calls to fail; ``None`` means every call.
+
+            >>> sim.fail("/v1/camera/shoot")                  # next shot 412s
+            >>> sim.fail("/v1/photos", "bad_request", times=3)
+        """
+        if error not in ERROR_BODIES:
+            raise ValueError(
+                f"unknown error {error!r}; captured errors: "
+                f"{sorted(ERROR_BODIES)}")
+        self._faults.append(_Fault(path, "fail", error=error, remaining=times))
+
+    def drop(self, path: str, *, times: Optional[int] = 1) -> None:
+        """Make ``path`` die mid-response, so the client sees a broken
+        connection rather than an error body. Surfaces as
+        ``KS2ConnectionError``. Behavioural — there is no fixture for a dropped
+        socket."""
+        self._faults.append(_Fault(path, "drop", remaining=times))
+
+    def delay(self, path: str, seconds: float, *,
+              times: Optional[int] = 1) -> None:
+        """Stall ``path`` for ``seconds`` before responding, to exercise client
+        timeouts. Behavioural, like :meth:`drop`."""
+        self._faults.append(_Fault(path, "delay", seconds=seconds,
+                                   remaining=times))
+
+    def drop_stream_after(self, frames: Optional[int]) -> None:
+        """Kill the live view stream after ``frames`` frames, as if the camera
+        or the WiFi went away mid-stream. ``None`` disables it."""
+        self._stream_drop_after = frames
+
+    def clear_faults(self, path: Optional[str] = None) -> None:
+        """Forget queued faults, all of them or just one path's."""
+        if path is None:
+            self._faults.clear()
+        else:
+            self._faults = [f for f in self._faults if f.path != path]
+        self._stream_drop_after = None
+
+    def _take_fault(self, path: str) -> Optional[_Fault]:
+        """Pop the next applicable fault for ``path``, if any."""
+        for fault in self._faults:
+            if fault.path == path and not fault.spent:
+                fault.consume()
+                if fault.spent:
+                    self._faults.remove(fault)
+                return fault
+        return None
 
     # -- events -----------------------------------------------------------
 
@@ -452,6 +678,20 @@ class CameraSimulator:
 
     # -- params -----------------------------------------------------------
 
+    @property
+    def exposure_mode(self) -> str:
+        """The mode-dial position the simulator is emulating."""
+        return str(self._params.get("exposureMode", "M"))
+
+    def params_lens(self) -> Dict[str, Any]:
+        return {**_OK, "focusMode": self.focus_mode}
+
+    def variables_lens(self) -> Dict[str, Any]:
+        # In MF the camera reports focused=true (the ring is wherever you left
+        # it); in AF it reports false until something drives focus.
+        return {**_OK, "focused": self.focus_mode == "mf",
+                "focusCenters": [], "focusMode": self.focus_mode}
+
     def params_camera(self) -> Dict[str, Any]:
         return {**_OK, **self._params}
 
@@ -491,6 +731,11 @@ class CameraSimulator:
                 if value not in allowed and not (key == "sv"
                                                  and value.lower() == "auto"):
                     return _err(400, "Bad Request"), False
+            elif key not in self._params:
+                # Measured: an unrecognised key is accepted with errCode 200 and
+                # ignored. Adding it would pollute the params and fire a
+                # spurious `camera` event.
+                continue
             if self._params.get(key) != value:
                 self._params[key] = value
                 changed = True
@@ -546,7 +791,9 @@ def create_app(sim: Optional[CameraSimulator] = None) -> Any:
             try:
                 limit = int(raw)
             except ValueError:
-                return _json(_err(400, "Bad Request"))
+                # Measured: `?limit=abc` is ignored and the full listing comes
+                # back with errCode 200 — the camera does not validate it.
+                limit = None
         payload, returned = sim.listing(limit)
         # Listing cost tracks the number of files actually returned, which is
         # the whole reason ?limit exists.
@@ -579,8 +826,79 @@ def create_app(sim: Optional[CameraSimulator] = None) -> Any:
         await _delay(sim.timing.download_full_ms)
         return _binary(_dng_stub(), "application/octet-stream")
 
-    async def shoot(request) -> Any:
+    def _shoot_refusal(af: Optional[str]) -> Optional[str]:
+        """Why the camera would refuse this shutter release, if it would.
+
+        All three are measured, and all three answer with the same 412 body:
+        Bulb mode requires shoot/start + shoot/finish; ``af=auto`` cannot drive
+        an MF lens; and a running live view stream blocks capture.
+        """
+        if sim.exposure_mode == "B":
+            return "bulb mode requires shoot/start + shoot/finish"
+        if sim.focus_mode == "mf" and (af or "").lower() == "auto":
+            return "af=auto cannot focus an MF lens"
+        if sim.active_streams > 0:
+            return "live view is streaming"
+        return None
+
+    async def params_lens(request) -> Any:
+        if request.method == "PUT":
+            await request.body()
+            await _delay(sim.timing.group_ms)
+            # Measured: writing focusMode over WiFi is refused with a 400 and
+            # the value does not change.
+            return _json(None, "error-400-bad-request.json")
+        await _delay(sim.timing.group_ms)
+        return _json(sim.params_lens())
+
+    async def variables_lens(request) -> Any:
+        await _delay(sim.timing.group_ms)
+        return _json(sim.variables_lens())
+
+    async def lens_focus(request) -> Any:
         await request.body()
+        await _delay(sim.timing.group_ms)
+        if sim.focus_mode == "mf":
+            return _json(None, "error-412-precondition.json")
+        return _json(None, "lens-focus-response.json")
+
+    async def bulb_start(request) -> Any:
+        body = (await request.body()).decode("utf-8", "replace")
+        await _delay(sim.timing.shoot_ms)
+        if sim.exposure_mode != "B":
+            # Measured: gated on the mode dial being on B.
+            return _json(None, "error-412-precondition.json")
+        _ = body
+        sim.bulb_open = True
+        return _json(None, "camera-shoot-start-bulb.json")
+
+    async def bulb_finish(request) -> Any:
+        await request.body()
+        await _delay(sim.timing.shoot_ms)
+        if sim.exposure_mode != "B":
+            return _json(None, "error-412-precondition.json")
+        was_open, sim.bulb_open = sim.bulb_open, False
+        if was_open:
+            async def settle_bulb() -> None:
+                await asyncio.sleep(sim.timing.capture_delay_s())
+                sim.commit_capture()
+                await sim.broadcast("storage")
+
+            sim._pending.add(t := asyncio.create_task(settle_bulb()))
+            t.add_done_callback(sim._pending.discard)
+        return _json(None, "camera-shoot-finish-bulb.json")
+
+    async def shoot(request) -> Any:
+        body = (await request.body()).decode("utf-8", "replace")
+        af = None
+        for pair in body.split("&"):
+            k, _, v = pair.partition("=")
+            if k.strip() == "af":
+                af = v.strip()
+        if (why := _shoot_refusal(af)) is not None:
+            await _delay(sim.timing.shoot_ms)
+            sim.last_refusal = why
+            return _json(None, "error-412-precondition.json")
 
         async def settle() -> None:
             # The camera answers the shoot at once; the file appears and the
@@ -589,11 +907,20 @@ def create_app(sim: Optional[CameraSimulator] = None) -> Any:
             sim.commit_capture()
             await sim.broadcast("storage")
 
-        asyncio.get_event_loop().create_task(settle())
+        # Held so the task is not garbage-collected mid-flight; asyncio only
+        # keeps a weak reference to it.
+        sim._pending.add(task := asyncio.create_task(settle()))
+        task.add_done_callback(sim._pending.discard)
         await _delay(sim.timing.shoot_ms)
         return _json(None, "camera-shoot-response.json")
 
     async def liveview(request) -> Any:
+        # Measured over two trials: the camera serves exactly ONE live view
+        # stream. Opening a second delivers one more frame to the first and then
+        # closes it, and the first never recovers — the newest requester wins.
+        sim._stream_generation += 1
+        my_generation = sim._stream_generation
+
         async def frames():
             sim.active_streams += 1
             try:
@@ -606,13 +933,30 @@ def create_app(sim: Optional[CameraSimulator] = None) -> Any:
                 # flooding the socket with frames no one asked for.
                 interval = max(
                     sim.timing.s(sim.timing.liveview_frame_interval_s), 0.001)
+                sent = 0
                 while True:
                     # The camera streams until the client stops reading, so this
                     # loop is unbounded; without an explicit disconnect check it
                     # would outlive the client and hold up shutdown.
                     if await request.is_disconnected():
                         return
+                    if (sim._stream_drop_after is not None
+                            and sent >= sim._stream_drop_after):
+                        # Injected mid-stream failure. Cancelling aborts the
+                        # response without the terminating chunk, so the client
+                        # sees the connection break rather than a tidy end of
+                        # stream — and unlike raising a normal exception it does
+                        # not make the server log a traceback for something we
+                        # asked for on purpose.
+                        raise asyncio.CancelledError(
+                            "pyks2 simulator: injected live view stream drop")
                     yield sim._mjpeg_part
+                    sent += 1
+                    if my_generation != sim._stream_generation:
+                        # A newer stream has taken over. The camera gives the
+                        # displaced client one last frame (hence yielding first)
+                        # and then drops it.
+                        return
                     await asyncio.sleep(interval)
             finally:
                 sim.active_streams -= 1
@@ -683,6 +1027,12 @@ def create_app(sim: Optional[CameraSimulator] = None) -> Any:
     routes += [
         Route("/v1/params/camera", params_camera, methods=["GET", "PUT"]),
         Route("/v1/variables/camera", variables_camera, methods=["GET"]),
+        Route("/v1/params/lens", params_lens, methods=["GET", "PUT"]),
+        Route("/v1/variables/lens", variables_lens, methods=["GET"]),
+        Route("/v1/lens/focus", lens_focus, methods=["POST"]),
+        # Bulb: these must precede /v1/camera/shoot so the longer paths win.
+        Route("/v1/camera/shoot/start", bulb_start, methods=["POST"]),
+        Route("/v1/camera/shoot/finish", bulb_finish, methods=["POST"]),
         Route("/v1/camera/shoot", shoot, methods=["POST"]),
         Route("/v1/liveview", liveview, methods=["GET"]),
         Route("/v1/liveview/zoom", liveview_zoom, methods=["POST"]),
@@ -700,8 +1050,47 @@ def create_app(sim: Optional[CameraSimulator] = None) -> Any:
 
     app = Starlette(routes=routes,
                     exception_handlers={405: unhandled_method})
+
+    async def faults(scope, receive, send):
+        """Apply any queued fault before the routes see the request.
+
+        Sits in front of everything so injection works uniformly, including on
+        paths that only the catch-all handles.
+        """
+        if scope["type"] != "http":
+            return await app(scope, receive, send)
+        fault = sim._take_fault(scope.get("path", ""))
+        if fault is None:
+            return await app(scope, receive, send)
+
+        if fault.kind == "delay":
+            await asyncio.sleep(fault.seconds)
+            return await app(scope, receive, send)
+
+        if fault.kind == "drop":
+            # Promise a body, then send nothing and finish. The client reads a
+            # truncated response and raises a transport error, which is what a
+            # camera vanishing mid-reply actually looks like.
+            await send({"type": "http.response.start", "status": 200,
+                        "headers": [(b"content-length", b"4096"),
+                                    (b"content-type", _JSON_CT.encode())]})
+            await send({"type": "http.response.body", "body": b"",
+                        "more_body": False})
+            return
+
+        name = ERROR_BODIES[fault.error or "precondition"]
+        if fault.error == "unhandled_method":
+            response = Response(fixture_bytes(name), status_code=400,
+                                media_type="text/html",
+                                headers={"Server": "server"})
+        else:
+            response = Response(fixture_bytes(name), media_type=_JSON_CT,
+                                headers=dict(CAMERA_HEADERS))
+        await response(scope, receive, send)
+
+    faults.state = app.state          # type: ignore[attr-defined]
     app.state.simulator = sim
-    return app
+    return faults
 
 
 def _dng_stub() -> bytes:

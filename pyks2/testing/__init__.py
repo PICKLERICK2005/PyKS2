@@ -38,6 +38,8 @@ __all__ = [
     "FAST",
     "create_app",
     "run_simulator",
+    "camera_json",
+    "ERROR_BODIES",
     "MJPEG_CONTENT_TYPE",
     "CAMERA_HEADERS",
 ]

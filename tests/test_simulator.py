@@ -19,7 +19,7 @@ import time
 
 import pytest
 
-from pyks2.errors import KS2APIError, KS2UnsupportedError
+from pyks2.errors import KS2APIError, KS2ConnectionError, KS2UnsupportedError
 
 pytest.importorskip("starlette")
 pytest.importorskip("uvicorn")
@@ -244,8 +244,8 @@ def test_illegal_value_raises(server):
 def test_empty_list_means_camera_controlled_write_is_silently_ignored():
     """PROTOCOL.md 6.5: an empty list means the camera owns that value — the
     PUT still returns 200 and the value does not change."""
-    sim = CameraSimulator()
-    sim._variables["svList"] = []
+    sim = CameraSimulator(timing=FAST)
+    sim.set_camera_controlled("sv")          # public API, not private poking
     with SimulatorServer(sim) as s:
         cam = s.client()
         before = cam.get_camera_params().sv
@@ -588,6 +588,274 @@ def test_shutdown_is_prompt_after_a_websocket_session():
     started = time.time()
     s.stop()
     assert time.time() - started < 5.0, "shutdown stalled on a live WebSocket"
+
+
+# --- the whole public client surface ---------------------------------------
+
+def test_every_public_client_call_works_against_the_simulator(server):
+    """The guard that matters: drive the real client's entire camera-facing
+    surface against the simulator and assert nothing fails unexpectedly.
+
+    A missing fixture is only discoverable here, and the camera is gone — so
+    this iterates the surface rather than trusting a hand-written list. The two
+    412s are correct answers, not failures: both are real preconditions.
+    """
+    from fractions import Fraction
+
+    cam = server.client()
+    first = list(cam.list_photos())[0].path
+
+    def liveview_ctx():
+        with cam.liveview(max_frames=2) as stream:
+            return len(list(stream))
+
+    must_work = {
+        "ping": lambda: cam.ping(),
+        "apis": lambda: cam.apis(),
+        "props": lambda: cam.props(),
+        "get_camera_params": lambda: cam.get_camera_params(),
+        "get_camera_constants": lambda: cam.get_camera_constants(),
+        "get_device_info": lambda: cam.get_device_info(),
+        "get_lens_state": lambda: cam.get_lens_state(),
+        "get_focus_mode": lambda: cam.get_focus_mode(),
+        "get_state": lambda: cam.get_state(),
+        "is_idle": lambda: cam.is_idle(),
+        "set_camera_params": lambda: cam.set_camera_params(av="8.0"),
+        "set_iso": lambda: cam.set_iso(400),
+        "set_aperture": lambda: cam.set_aperture(8.0),
+        "set_shutter_speed": lambda: cam.set_shutter_speed(Fraction(1, 100)),
+        "set_exposure_comp": lambda: cam.set_exposure_comp(0.3),
+        "set_wb": lambda: cam.set_wb("daylight"),
+        "focus": lambda: cam.focus(0.5, 0.5),
+        "shoot": lambda: cam.shoot(af="off"),
+        "capture": lambda: cam.capture(af="off", timeout=20),
+        "capture_with_events": lambda: cam.capture_with_events(af="off",
+                                                              timeout=20),
+        "list_photos": lambda: list(cam.list_photos()),
+        "list_photos(limit)": lambda: list(cam.list_photos(limit=3)),
+        "latest_info": lambda: cam.latest_info(),
+        "photo_info": lambda: cam.photo_info(first),
+        "preview_bytes": lambda: cam.preview_bytes(first),
+        "iter_liveview_frames": lambda: list(
+            cam.iter_liveview_frames(max_frames=2)),
+        "liveview": liveview_ctx,
+    }
+    # every read group x subsystem, built from the library's own constants
+    for group in ("props", "constants", "params", "variables", "status"):
+        must_work[f"{group}()"] = (lambda g=group: getattr(cam, g)())
+        for sub in ("camera", "lens", "liveview", "device"):
+            must_work[f"{group}({sub})"] = (
+                lambda g=group, s=sub: getattr(cam, g)(s))
+
+    failures = []
+    for name, call in must_work.items():
+        try:
+            call()
+        except Exception as e:  # noqa: BLE001 - reporting every failure at once
+            failures.append(f"{name}: {type(e).__name__}: {e}")
+    assert not failures, "these client calls failed:\n  " + "\n  ".join(failures)
+
+    # correct 412s: a precondition the camera really enforces
+    for name, call in (("liveview_zoom", lambda: cam.liveview_zoom(zoom=1)),
+                       ("bulb_start", lambda: cam.bulb_start()),
+                       ("bulb_finish", lambda: cam.bulb_finish())):
+        with pytest.raises(KS2APIError) as e:
+            call()
+        assert e.value.err_code == 412, name
+
+
+# --- the public configuration API ------------------------------------------
+
+def test_writability_config_replaces_private_poking(server):
+    cam, sim = server.client(), server.simulator
+    assert sim.writable("sv") is True
+    sim.set_camera_controlled("sv")
+    assert sim.writable("sv") is False
+    before = cam.get_camera_params().sv
+    cam.set_camera_params(sv="6400")          # 200, silently ignored
+    assert cam.get_camera_params().sv == before
+    with pytest.raises(KS2UnsupportedError):
+        cam.set_iso(6400)
+    sim.set_user_controlled("sv")
+    assert sim.writable("sv") is True
+    assert cam.set_iso(400).sv == "400"
+
+
+def test_writability_config_rejects_unknown_fields(server):
+    for bad in ("WBMode", "nonsense"):
+        with pytest.raises(ValueError):
+            server.simulator.set_camera_controlled(bad)
+
+
+def test_set_exposure_mode_loads_the_real_bulb_capture(server):
+    """Bulb is the mode where the camera genuinely owns tv and xv, so this
+    empty-list state comes from a capture rather than being synthesised."""
+    cam, sim = server.client(), server.simulator
+    sim.set_exposure_mode("B")
+    assert sim.writable("tv") is False
+    assert sim.writable("xv") is False
+    assert sim.writable("av") is True
+    assert cam.get_camera_params().raw["exposureMode"] == "B"
+
+
+def test_set_exposure_mode_refuses_modes_with_no_capture(server):
+    """Faithfulness guard: inventing a dial position would make the writability
+    signal fiction, so only captured modes are accepted."""
+    with pytest.raises(ValueError) as e:
+        server.simulator.set_exposure_mode("TAV")
+    assert "captured modes" in str(e.value)
+
+
+def test_bulb_sequence_writes_a_file_and_fires_one_event(server):
+    cam, sim = server.client(), server.simulator
+    sim.set_exposure_mode("B")
+    before = len(list(cam.list_photos()))
+    info = cam.bulb_exposure(0.2)
+    assert info.path
+    assert len(list(cam.list_photos())) == before + 1
+    assert sim.emitted == [sim.event_payload("storage")]
+
+
+def test_bulb_endpoints_are_gated_on_the_dial(server):
+    cam = server.client()
+    for call in (cam.bulb_start, cam.bulb_finish):
+        with pytest.raises(KS2APIError) as e:
+            call()
+        assert e.value.err_code == 412
+
+
+def test_plain_shoot_is_refused_in_bulb_mode(server):
+    cam, sim = server.client(), server.simulator
+    sim.set_exposure_mode("B")
+    with pytest.raises(KS2APIError) as e:
+        cam.shoot(af="off")
+    assert e.value.err_code == 412
+
+
+def test_mf_refuses_af_auto_but_allows_af_off(server):
+    """Measured: in MF the camera answers af=auto with a 412 — it is not a
+    silent no-op. af=off is the MF-safe form."""
+    cam, sim = server.client(), server.simulator
+    sim.set_focus_mode("mf")
+    assert cam.get_focus_mode() == "mf"
+    with pytest.raises(KS2APIError) as e:
+        cam.shoot(af="auto")
+    assert e.value.err_code == 412
+    assert cam.shoot(af="off").focused is True
+
+
+def test_focus_mode_write_is_refused(server):
+    """Measured: PUT /v1/params/lens focusMode=... returns 400 and changes
+    nothing."""
+    cam = server.client()
+    with pytest.raises(KS2APIError) as e:
+        cam._request("PUT", "/v1/params/lens", body="focusMode=mf")
+    assert e.value.err_code == 400
+    assert cam.get_focus_mode() == "af"
+
+
+def test_seed_photos_replaces_the_card(server):
+    cam, sim = server.client(), server.simulator
+    sim.seed_photos({"100_0101": ["IMGP0001.DNG", "IMGP0002.JPG"],
+                     "101_0102": ["IMGP0003.DNG"]})
+    assert [e.path for e in cam.list_photos()] == [
+        "100_0101/IMGP0001.DNG", "100_0101/IMGP0002.JPG",
+        "101_0102/IMGP0003.DNG"]
+    assert cam.latest_info().captured is False, "seeding resets the session"
+    sim.add_photo("101_0102", "IMGP0004.DNG")
+    assert len(list(cam.list_photos())) == 4
+
+
+# --- fault injection -------------------------------------------------------
+
+def test_fail_returns_a_real_captured_error_body(server):
+    cam, sim = server.client(), server.simulator
+    sim.fail("/v1/camera/shoot")                       # 412 once
+    with pytest.raises(KS2APIError) as e:
+        cam.shoot(af="off")
+    assert e.value.err_code == 412
+    assert cam.shoot(af="off").focused is True, "fault should be spent"
+
+
+def test_fail_counts_down_and_then_recovers(server):
+    cam, sim = server.client(), server.simulator
+    sim.fail("/v1/photos", "bad_request", times=2)
+    for _ in range(2):
+        with pytest.raises(KS2APIError) as e:
+            cam.list_photos()
+        assert e.value.err_code == 400
+    assert len(list(cam.list_photos())) > 0
+
+
+def test_fail_forever_until_cleared(server):
+    cam, sim = server.client(), server.simulator
+    sim.fail("/v1/props", "not_found", times=None)
+    for _ in range(3):
+        with pytest.raises(KS2APIError) as e:
+            cam.props()
+        assert e.value.err_code == 404
+    sim.clear_faults("/v1/props")
+    assert cam.props()["model"] == "PENTAX K-S2"
+
+
+def test_fail_rejects_uninvented_errors(server):
+    """Only captured error bodies are on offer — notably there is no card-full,
+    because that response was never captured."""
+    with pytest.raises(ValueError) as e:
+        server.simulator.fail("/v1/props", "card_full")
+    assert "captured errors" in str(e.value)
+
+
+def test_every_advertised_error_body_is_a_real_fixture():
+    from pyks2.testing.simulator import ERROR_BODIES
+    for alias, name in ERROR_BODIES.items():
+        assert fixture_bytes(name), f"{alias} -> {name} missing"
+
+
+def test_drop_breaks_the_connection(server):
+    cam, sim = server.client(), server.simulator
+    sim.drop("/v1/ping")
+    with pytest.raises(KS2ConnectionError):
+        cam._request("GET", "/v1/ping")
+    assert cam.ping() is True, "only the one call should break"
+
+
+def test_delay_trips_a_client_timeout(server):
+    server.simulator.delay("/v1/props", 1.0)
+    impatient = server.client(timeout=0.3)
+    with pytest.raises(KS2ConnectionError):
+        impatient.props()
+
+
+def test_drop_stream_after_kills_live_view_mid_stream(server):
+    cam, sim = server.client(), server.simulator
+    sim.drop_stream_after(2)
+    seen = 0
+    with pytest.raises(Exception):
+        for _ in cam.iter_liveview_frames(max_frames=10):
+            seen += 1
+    assert seen == 2, f"expected the drop after 2 frames, got {seen}"
+    sim.clear_faults()
+    assert len(list(cam.iter_liveview_frames(max_frames=3))) == 3
+
+
+def test_a_second_live_view_stream_displaces_the_first(server):
+    """Measured over two trials: the camera serves one stream, handing it to the
+    newest requester and dropping the previous connection."""
+    cam = server.client()
+    first = cam.liveview_stream()
+    first_chunks = first.iter_content(4096)
+    next(first_chunks)                              # first is streaming
+    second = cam.liveview_stream()
+    second_chunks = second.iter_content(4096)
+    next(second_chunks)                             # second takes over
+    try:
+        with pytest.raises(Exception):
+            for _ in range(500):
+                next(first_chunks)
+    finally:
+        first.close()
+        second.close()
 
 
 # --- the pytest fixture we ship -------------------------------------------
