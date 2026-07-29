@@ -1,11 +1,29 @@
-# Captured camera responses are byte-exact evidence, not source code.
+# Normalise line endings for source, so a Windows checkout and Linux CI agree.
+# Anything git considers text is stored LF in the repository.
+* text=auto
+
+# Source and config: LF in the working tree too, not just in the repository.
+*.py text eol=lf
+*.toml text eol=lf
+*.cfg text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.in text eol=lf
+
+# --- overrides: captured camera responses --------------------------------
+# These MUST come after the rules above, because the last matching rule wins.
 #
-# The simulator serves these verbatim and the tests assert their exact bytes and
-# lengths, so line endings must never be rewritten. Without this, cloning on
-# Windows (core.autocrlf=true) rewrites every LF as CRLF: the /v1/changes payload
-# becomes 54 bytes instead of the camera's 53, photos-listing.json gains 29
-# stray CRs, and the simulator stops being byte-faithful. CI runs on Linux, so
-# nothing would have caught it there.
+# Captured responses are byte-exact evidence, not source code. The simulator
+# serves them verbatim and the tests assert their exact bytes and lengths, so
+# line endings must never be rewritten in either direction. Without this,
+# cloning on Windows (core.autocrlf=true) rewrote every LF as CRLF: the
+# /v1/changes payload became 54 bytes instead of the camera's 53, and
+# photos-listing.json gained 29 stray CRs. CI runs on Linux, so nothing would
+# have caught it there.
+#
+# unhandled-method.html is the reverse case: the camera really does send CRLF
+# in that body, and -text is what preserves it.
 pyks2/testing/data/** -text
 examples/** -text
 
