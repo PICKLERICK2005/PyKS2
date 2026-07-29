@@ -25,6 +25,20 @@ from .models import ChangeEvent
 _WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 
+def _payload_to_event(payload: str) -> Optional[ChangeEvent]:
+    """Parse one WebSocket text payload into a ChangeEvent, or None if it's
+    not a change event. Shared by the sync ChangesClient and the async
+    AsyncChangesClient (pyks2.async_client) so the two transports don't
+    duplicate this parsing."""
+    try:
+        obj = json.loads(payload)
+    except (ValueError, json.JSONDecodeError):
+        return None
+    if "changed" in obj:
+        return ChangeEvent.from_dict(obj)
+    return None
+
+
 class ChangesClient:
     """WebSocket client for /v1/changes.
 
@@ -133,12 +147,9 @@ class ChangesClient:
                 break
             self._buf += data
             for payload in self._drain_frames():
-                try:
-                    obj = json.loads(payload)
-                except (ValueError, json.JSONDecodeError):
-                    continue
-                if "changed" in obj:
-                    yield ChangeEvent.from_dict(obj)
+                ev = _payload_to_event(payload)
+                if ev is not None:
+                    yield ev
 
     def _drain_frames(self):
         """Yield complete text-frame payloads from the buffer."""
@@ -216,10 +227,4 @@ class ChangesClient:
 
     @staticmethod
     def _payload_to_event(payload: str) -> Optional[ChangeEvent]:
-        try:
-            obj = json.loads(payload)
-        except (ValueError, json.JSONDecodeError):
-            return None
-        if "changed" in obj:
-            return ChangeEvent.from_dict(obj)
-        return None
+        return _payload_to_event(payload)
