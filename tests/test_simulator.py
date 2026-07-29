@@ -27,7 +27,12 @@ pytest.importorskip("websockets")
 pytest.importorskip("httpx")
 
 from pyks2.testing import CameraSimulator, SimulatorServer  # noqa: E402
-from pyks2.testing.simulator import fixture_bytes  # noqa: E402
+from pyks2.testing.simulator import (  # noqa: E402
+    CAMERA_HEADERS,
+    FAST,
+    Timing,
+    fixture_bytes,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -47,7 +52,9 @@ def _real_requests():
 
 @pytest.fixture
 def server():
-    with SimulatorServer() as s:
+    """Latency off, so the suite stays quick. Timing itself is covered by the
+    handful of tests that ask for it explicitly."""
+    with SimulatorServer(timing=FAST) as s:
         yield s
 
 
@@ -80,6 +87,27 @@ def test_fixtures_load_independently_of_cwd(tmp_path, monkeypatch):
         assert s.client().ping() is True
 
 
+def test_camera_json_encoder_reproduces_captured_bytes():
+    """The generated-JSON encoder must match the firmware's house style exactly.
+
+    Re-encoding a parsed capture has to give back the original bytes, or dynamic
+    responses would look visibly unlike the static ones on the wire.
+    """
+    from pyks2.testing.simulator import camera_json
+    for name in ("photos-listing.json", "photo-info.json",
+                 "photos-latest-info.json"):
+        raw = fixture_bytes(name)
+        assert camera_json(json.loads(raw)) == raw, name
+
+
+def test_camera_json_matches_the_observed_no_latest_body():
+    """This one response is generated rather than replayed (re-capturing it
+    needs a power cycle), so pin it against what the camera actually sent."""
+    from pyks2.testing.simulator import camera_json
+    assert camera_json({"errCode": 200, "errMsg": "OK", "captured": False}) == (
+        b'{"errCode": 200,\n "errMsg": "OK",\n "captured": false}\n')
+
+
 def test_missing_extra_names_the_extra(monkeypatch):
     import pyks2.testing.simulator as mod
     monkeypatch.setattr(mod, "Starlette", None)
@@ -110,10 +138,28 @@ def test_host_port_is_split_for_the_websocket(server):
 # --- photos: ordering + head-limit -----------------------------------------
 
 def test_photos_are_oldest_first(server):
+    """Ordered by ascending shot number — which is not the same as sorting the
+    filenames: the real card holds a RAW+JPEG pair sharing shot number 2224, and
+    the camera lists the .JPG before the .DNG.
+    """
+    import re
     entries = list(server.client().list_photos())
-    names = [e.file for e in entries]
-    assert names == sorted(names), "listing must be oldest-first"
+    numbers = [int(re.search(r"(\d+)", e.file).group(1)) for e in entries]
+    assert numbers == sorted(numbers), "listing must be oldest-first"
     assert len(entries) >= 2
+
+
+def test_listing_contains_a_raw_plus_jpeg_pair(server):
+    """A wrinkle worth keeping: two entries can share a shot number with
+    different extensions, so paths must not be keyed on the number alone."""
+    entries = list(server.client().list_photos())
+    stems = [e.file.rsplit(".", 1)[0] for e in entries]
+    dupes = {s for s in stems if stems.count(s) > 1}
+    assert dupes, "expected at least one RAW+JPEG pair in the real listing"
+    for stem in dupes:
+        exts = {e.file.rsplit(".", 1)[1] for e in entries
+                if e.file.startswith(stem + ".")}
+        assert exts == {"DNG", "JPG"}
 
 
 def test_limit_is_a_head_limit_so_newest_needs_a_tail_slice(server):
@@ -126,10 +172,49 @@ def test_limit_is_a_head_limit_so_newest_needs_a_tail_slice(server):
     assert full[-1].file == max(e.file for e in full)
 
 
-def test_latest_info_tracks_the_newest_listed_file(server):
+def test_limit_keeps_every_directory_even_when_empty(server):
+    """Measured: the camera always returns all dirs, giving the ones past the
+    limit an empty file list rather than dropping them."""
     cam = server.client()
-    newest = list(cam.list_photos())[-1].path
-    assert cam.latest_info().path == newest
+    full_dirs = cam.list_photos().raw["dirs"]
+    limited = cam.list_photos(limit=2).raw["dirs"]
+    assert len(limited) == len(full_dirs) > 1
+    assert [d["name"] for d in limited] == [d["name"] for d in full_dirs]
+    assert sum(len(d["files"]) for d in limited) == 2
+    assert limited[-1]["files"] == []
+
+
+def test_limit_zero_means_no_limit(server):
+    """Measured: limit=0 returns everything, not nothing."""
+    cam = server.client()
+    assert len(list(cam.list_photos(limit=0))) == len(list(cam.list_photos()))
+
+
+def test_spans_multiple_directories(server):
+    """The shipped listing is a real full card, so cross-dir flattening and
+    ordering actually get exercised."""
+    cam = server.client()
+    entries = list(cam.list_photos())
+    assert len({e.dir for e in entries}) > 1
+    assert len(entries) > 100
+
+
+def test_no_latest_until_something_is_captured(server):
+    """Measured: until the camera captures in this power session it reports
+    captured:false with no dir/file, however many files are on the card."""
+    cam = server.client()
+    assert list(cam.list_photos()), "card is not empty"
+    info = cam.latest_info()
+    assert info.captured is False
+    assert not info.raw.get("dir") and not info.raw.get("file")
+
+
+def test_latest_info_populates_after_a_capture(server):
+    cam = server.client()
+    captured = cam.capture(af="auto", timeout=15)
+    info = cam.latest_info()
+    assert info.captured is True
+    assert info.path == captured.path == list(cam.list_photos())[-1].path
 
 
 # --- params: the list-emptiness writability signal --------------------------
@@ -138,6 +223,16 @@ def test_params_put_round_trip(server):
     cam = server.client()
     assert cam.set_camera_params(av="8.0").av == "8.0"
     assert cam.get_camera_params().av == "8.0"
+
+
+def test_put_params_echoes_a_variables_shaped_body(server):
+    """Measured: a PUT returns more than a GET does — the capability lists,
+    `state` and `exposureModeOption` come back too."""
+    cam = server.client()
+    got = cam._request("GET", "/v1/params/camera")
+    put = cam._request("PUT", "/v1/params/camera", body="av=8.0")
+    assert set(put) - set(got) == {
+        "avList", "tvList", "svList", "xvList", "exposureModeOption", "state"}
 
 
 def test_illegal_value_raises(server):
@@ -324,7 +419,7 @@ def test_served_framing_is_the_captured_bytes(server):
 
 
 def test_liveview_zoom_is_gated_on_an_active_stream(server):
-    """PROTOCOL.md 9: parameters return 412 unless live view is streaming."""
+    """Measured: 412 unless live view is streaming, 200 while it is."""
     cam = server.client()
     with pytest.raises(KS2APIError) as e:
         cam.liveview_zoom(zoom=1)
@@ -339,6 +434,142 @@ def test_liveview_zoom_is_gated_on_an_active_stream(server):
         assert cam.liveview_zoom(zoom=1)["errCode"] == 200
     finally:
         resp.close()
+
+
+def test_zoom_gate_ignores_the_body_even_when_empty(server):
+    """Measured, and it corrected the write-up: the gate is purely about whether
+    a stream is running. PROTOCOL.md used to claim an empty body returned 200.
+    """
+    cam = server.client()
+    with pytest.raises(KS2APIError) as e:
+        cam.liveview_zoom()                       # no params at all
+    assert e.value.err_code == 412
+
+    resp = cam.liveview_stream()
+    frames = resp.iter_content(4096)
+    try:
+        next(frames)
+        assert cam.liveview_zoom()["errCode"] == 200
+        assert cam.liveview_zoom(zoom=1)["errCode"] == 200
+    finally:
+        resp.close()
+
+
+# --- Law 1 and the one place the camera breaks it -------------------------
+
+def test_missing_photo_is_404_in_the_body_with_http_200(server):
+    cam = server.client()
+    for path in ("/v1/photos/999_9999/IMGP9999.DNG/info",
+                 "/v1/photos/999_9999/IMGP9999.DNG"):
+        with pytest.raises(KS2APIError) as e:
+            cam._request("GET", path)
+        assert e.value.err_code == 404, path
+
+
+def test_unknown_path_is_errcode_400_with_http_200(server):
+    import requests
+    raw = requests.get(f"{server.base_url}/v1/no-such-endpoint", timeout=10)
+    assert raw.status_code == 200          # Law 1: HTTP stays 200
+    assert raw.json()["errCode"] == 400
+
+
+def test_unhandled_method_returns_real_400_and_html(server):
+    """The single documented exception to Law 1."""
+    import requests
+    raw = requests.delete(f"{server.base_url}/v1/props", timeout=10)
+    assert raw.status_code == 400
+    assert "text/html" in raw.headers["Content-Type"]
+    assert "<html>" in raw.text and "Bad Request" in raw.text
+    # and the client surfaces it as an API error, not a crash
+    with pytest.raises(KS2APIError):
+        server.client()._request("DELETE", "/v1/props")
+
+
+def test_camera_response_headers_are_present(server):
+    import requests
+    h = requests.get(f"{server.base_url}/v1/props", timeout=10).headers
+    assert h["Server"] == "server"
+    assert h["Pragma"] == "no-cache"
+    assert h["Expires"] == "0"
+    assert h["Max-Age"] == "0"
+    assert h["Accept-Ranges"] == "bytes"
+    assert "no-store" in h["Cache-Control"]
+    for key in CAMERA_HEADERS:
+        assert key in h
+
+
+def test_event_payload_keeps_the_cameras_trailing_newline(server):
+    """The storage frame measures 53 bytes on the wire — the JSON plus a
+    newline. Dropping it would make the simulator a byte off."""
+    payload = server.simulator.event_payload("storage")
+    assert payload.endswith("\n")
+    assert len(payload.encode()) == 53
+    assert json.loads(payload)["changed"] == "storage"
+
+
+def test_view_download_is_the_real_preview_not_a_liveview_frame(server):
+    """size=view serves a genuine ~53 KB camera preview JPEG."""
+    cam = server.client()
+    info = cam.capture(af="auto", timeout=15)
+    out = os.path.join(tempfile.mkdtemp(), "p.jpg")
+    n = cam.download(info.path, out, size="view")
+    assert 40_000 < n < 70_000, n
+    with open(out, "rb") as f:
+        assert f.read(4).hex() == "ffd8ffdb"
+    # distinctly larger than a live view frame (~27 KB)
+    assert n > len(fixture_bytes("liveview-frame-raw.bin"))
+
+
+# --- the measured latency model -------------------------------------------
+
+def test_fast_timing_really_is_instant(server):
+    started = time.time()
+    server.client().props()
+    assert time.time() - started < 0.25
+
+
+def test_realistic_timing_reproduces_measured_latency():
+    """Realistic is the default, and it is meant to be slow: a mock that answers
+    instantly hides the timeout and ordering bugs this exists to catch."""
+    with SimulatorServer(timing=Timing()) as s:
+        cam = s.client()
+        started = time.time()
+        cam.props()
+        props_s = time.time() - started
+        assert 0.05 < props_s < 0.5, props_s
+
+        # /v1/photos scales with the number of files returned, which is the
+        # entire reason ?limit exists.
+        started = time.time()
+        cam.list_photos()
+        full_s = time.time() - started
+        started = time.time()
+        cam.list_photos(limit=2)
+        limited_s = time.time() - started
+        assert full_s > limited_s * 2, (full_s, limited_s)
+        assert full_s > 1.0, full_s
+
+
+def test_realistic_capture_reports_no_file_until_it_lands():
+    """The ordering that matters: right after the shoot the camera has not
+    written anything yet, so `latest` must still be empty."""
+    with SimulatorServer(timing=Timing()) as s:
+        cam = s.client()
+        cam.shoot(af="auto")
+        assert cam.latest_info().captured is False, "file appeared too early"
+        info = cam.wait_for_capture(since=None, timeout=15)
+        assert info.captured and info.path
+
+
+def test_realistic_liveview_waits_for_the_mirror():
+    """First frame only arrives once the mirror is up (~0.8 s measured)."""
+    with SimulatorServer(timing=Timing()) as s:
+        cam = s.client()
+        started = time.time()
+        frames = list(cam.iter_liveview_frames(max_frames=2))
+        elapsed = time.time() - started
+        assert len(frames) == 2
+        assert elapsed > 0.5, f"first frame too soon ({elapsed:.2f}s)"
 
 
 def test_shutdown_is_prompt_after_a_websocket_session():
