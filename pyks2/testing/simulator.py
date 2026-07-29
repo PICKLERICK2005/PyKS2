@@ -1063,9 +1063,26 @@ def create_app(sim: Optional[CameraSimulator] = None) -> Any:
         if fault is None:
             return await app(scope, receive, send)
 
+        # Drain the request body first. Replying to a POST or PUT without
+        # consuming what the client is still sending races the send, and the
+        # client sees a connection error instead of the injected response —
+        # intermittently, which is worse than always.
+        body = b""
+        while True:
+            message = await receive()
+            if message["type"] != "http.request":
+                break
+            body += message.get("body", b"")
+            if not message.get("more_body", False):
+                break
+
+        async def replay():
+            """Hand the drained body to the app, for faults that pass through."""
+            return {"type": "http.request", "body": body, "more_body": False}
+
         if fault.kind == "delay":
             await asyncio.sleep(fault.seconds)
-            return await app(scope, receive, send)
+            return await app(scope, replay, send)
 
         if fault.kind == "drop":
             # Promise a body, then send nothing and finish. The client reads a

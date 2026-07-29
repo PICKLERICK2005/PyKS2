@@ -777,6 +777,34 @@ def test_fail_returns_a_real_captured_error_body(server):
     assert cam.shoot(af="off").focused is True, "fault should be spent"
 
 
+def test_injected_faults_drain_request_bodies(server):
+    """Regression: the fault path must consume the request body before replying.
+
+    Answering a POST/PUT while the client is still sending races the send, and
+    the client gets a transport error instead of the injected response — only
+    sometimes, which made it a flake rather than a failure. Repeated because
+    once-through would not have caught it.
+    """
+    cam, sim = server.client(), server.simulator
+    for _ in range(12):
+        sim.fail("/v1/camera/shoot")                   # POST with a body
+        with pytest.raises(KS2APIError) as e:
+            cam.shoot(af="off")
+        assert e.value.err_code == 412
+        sim.fail("/v1/params/camera", "bad_request")   # PUT with a body
+        with pytest.raises(KS2APIError) as e:
+            cam.set_camera_params(av="8.0")
+        assert e.value.err_code == 400
+
+
+def test_delay_still_delivers_the_request_body(server):
+    """A delayed request must reach the app intact — the body is drained by the
+    fault layer, so it has to be replayed."""
+    cam, sim = server.client(), server.simulator
+    sim.delay("/v1/params/camera", 0.05)
+    assert cam.set_camera_params(av="8.0").av == "8.0"
+
+
 def test_fail_counts_down_and_then_recovers(server):
     cam, sim = server.client(), server.simulator
     sim.fail("/v1/photos", "bad_request", times=2)
