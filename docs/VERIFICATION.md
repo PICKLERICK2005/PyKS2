@@ -89,6 +89,27 @@ instantly and `capture()` hung, adopting the new file as its own baseline. The
 simulator now defers the file (and the event) exactly as the camera does, with a
 floor that never collapses to zero even when latency is switched off.
 
+### What those 40 checks did not cover — found 2026-07-30, no hardware
+
+Scope note, because "40 of 40 match" reads broader than it is. The probe compared
+the paths it visited; two the simulator computes were not among them, and both
+were divergent:
+
+1. **The lens read groups' `focused` field.** `params/lens`, `variables/lens` and
+   `status/lens` were derived from a "MF means focused" rule rather than replayed.
+   Against the captures, `variables/lens` served `false` in AF where the camera
+   reported `true`, and `status/lens` never moved off the AF capture whatever the
+   lever said.
+2. **The refusal body for an illegal `PUT /v1/params/camera` value** — rebuilt by
+   `camera_json()` and so two bytes off the capture, because the firmware formats
+   error bodies without the break after the comma that its data bodies have.
+
+Neither needed a camera to establish: the captures *are* the reference, so the
+check is diffing every served response against the fixture for the same
+scenario. That audit now runs over the whole surface and is clean; both fixes are
+pinned by tests that compare bytes rather than parsed JSON. Parsed-JSON
+assertions are what let the second one through.
+
 ---
 
 ## 2026-07-29 — async streaming path (`pyks2[async]`)
