@@ -66,7 +66,10 @@ def cmd_info(args) -> int:
 
 def cmd_shoot(args) -> int:
     cam = _cam(args)
-    if args.wait:
+    # --download has nothing to download until the file lands, so it implies
+    # the wait. Ignoring it silently, as this used to, looked like a failed
+    # download rather than a flag that never ran.
+    if args.wait or args.download:
         # capture() records the baseline BEFORE firing, so completion
         # detection can't be fooled by the pre-existing last image.
         info = cam.capture(af=args.af, timeout=args.wait_timeout,
@@ -193,7 +196,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="AF mode (default: auto-detect from AF/MF lever)")
     sp.add_argument("--wait", action="store_true", help="wait for capture")
     sp.add_argument("--wait-timeout", type=float, default=30.0)
-    sp.add_argument("--download", metavar="OUT", help="download the shot after")
+    sp.add_argument("--download", metavar="OUT",
+                    help="download the shot after (implies --wait)")
     sp.add_argument("--size", choices=["view", "full"], default="full")
     sp.set_defaults(func=cmd_shoot)
 
