@@ -211,7 +211,8 @@ sim = ks2_simulator.simulator
 
 # state
 sim.set_exposure_mode("B")        # the real Bulb capture: tv/xv camera-owned
-sim.set_focus_mode("mf")          # in MF, af=auto is refused with a 412
+sim.set_focus_mode("mf")          # in MF, af=auto is refused with a 412;
+                                  # the lens reads switch to the MF capture
 sim.set_camera_controlled("sv")   # ISO camera-owned: writes 200 but no-op
 sim.seed_photos({"100_0101": ["IMGP0001.DNG"]})
 
@@ -236,8 +237,9 @@ match any photo; pass a concrete `"/v1/photos/DIR/FILE"` to target one.
 `fail()` only accepts errors that were actually captured — `"precondition"`
 (412), `"bad_request"` (400), `"not_found"` (404), `"unhandled_method"` (a real
 HTTP 400 with an HTML body). There is deliberately no card-full: that response
-was never captured, and the simulator does not invent wire data — it tells you
-to use the near-full `remain: 1` state instead. Likewise `set_exposure_mode()`
+was never captured, and the simulator does not invent wire data — it points you
+at the near-full `remain: 1` capture in the repo's `examples/` instead. Likewise
+`set_exposure_mode()`
 accepts only the dial positions with a real capability capture behind them, and
 points you at `set_camera_controlled()` when you ask for another.
 
