@@ -3,6 +3,95 @@
 All notable changes to **pyks2** are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.0rc2] — 2026-07-30
+
+A second release candidate, not the stable release, and the reason is process
+rather than doubt about the code. `1.2.0rc1` was soaked by a real downstream
+consumer (SPTFS); everything below landed *after* that soak, so no consumer has
+yet run the bytes that would become 1.2.0. Two of these fixes are in the client
+itself, not the simulator, so "the simulator got more faithful" does not cover
+it. rc2 exists to be re-verified from the outside before promotion.
+
+`rc1` cannot be re-cut: it is published and immutable, and it carries the
+superseded bytes.
+
+No API changed, so anything written against `rc1` keeps working — but if you
+depend on `get_lens_state().focused`, read the first entry under *Fixed: the
+client*.
+
+### Fixed: the client (`pyks2`)
+These reach anyone using the library, independently of the simulator.
+
+- **`get_lens_state().focused` was wrong in MF.** Strictly it was the simulator
+  that lied, but it lied about the value a client reads, so any downstream test
+  asserting on `focused` in MF was asserting the wrong thing and passing. Detail
+  in the simulator section below.
+- **`pyks2 shoot --download OUT` silently skipped the download** unless `--wait`
+  was also passed: the flag was only read inside the `--wait` branch, so the
+  shutter fired and nothing was fetched or reported. It reads as a download that
+  failed rather than one that never ran. `--download` now implies the wait, since
+  there is nothing to fetch until the file lands.
+- **`preview_bytes()` accepted a malformed path** and built a nonsense URL from
+  it, where `photo_info()` and `download()` both raise `ValueError` on the same
+  input. It now raises too.
+
+### Fixed: the simulator (`pyks2.testing`)
+- **The lens read groups now replay their captures instead of deriving them.**
+  `params/lens`, `variables/lens` and `status/lens` were computed from a "MF
+  means focused" rule, and the rule was wrong in both directions. The camera
+  contradicts *itself* here: in AF it reports `focused: false` on `status/lens`
+  and `props/lens` but `focused: true` on `variables/lens`, in one physical
+  state; in MF all three report `true`. So `variables/lens` served `false` in AF
+  where the capture says `true`, and `status/lens` stayed on the AF capture
+  however the lever was set — meaning `get_lens_state().focused` was wrong in MF,
+  which is exactly the state MF users are in. `set_focus_mode()` now switches all
+  three to the matching capture. The MF captures had shipped in the wheel since
+  `rc1` and were never read: `params-lens-mf.json`, `variables-lens-mf.json` and
+  `status-lens-mf.json`. `props/lens` was only ever captured in AF and so does
+  not follow the lever; nothing was invented to make it.
+- **An illegal `PUT /v1/params/camera` value served rebuilt bytes.** It was the
+  one refusal the simulator encoded with `camera_json()` rather than replaying,
+  and it differed from the capture: the firmware formats error bodies unlike its
+  data bodies — `{"errCode": 400,"errMsg": "Bad Request"}`, no break after the
+  comma — so the two were two bytes apart on a path `PROVENANCE.md` explicitly
+  claims the captured 400 covers. Every refusal now serves the captured file, and
+  a test compares the bytes. An audit of every other computed response against
+  its capture found no further divergence.
+- `clear_faults(path)` cancelled `drop_stream_after()` as a side effect, even
+  though the stream drop is not keyed on a path. Only `clear_faults()` does now.
+- `mypy pyks2` is clean again (25 errors → 0). All of them came from splatting a
+  `dict[str, bool]` into uvicorn's precisely typed signature, plus a route list
+  that mixes `Route` with `WebSocketRoute`. It is configured in `pyproject.toml`
+  but not gated in CI, so this had gone unnoticed.
+
+### Documentation
+- `PROVENANCE.md` now labels **both** generated bodies, not one. The
+  `/v1/liveview/zoom` success body was inferred — the gate was measured
+  exhaustively, the 200 body's bytes were not kept — and that is now recorded as
+  inferred rather than passed off as captured.
+- The card-full guard pointed at `status-device-cardfull.json` as if it were
+  available to an installed user. It is in the repo's `examples/`, is a *state*
+  rather than a failure response, and its formatting was normalised when it was
+  written there — so its values are real but its bytes are not wire bytes, which
+  is also why it is not promoted to a fixture. The message and `PROVENANCE.md`
+  both say so now.
+
+### Testing
+Nine new test functions, 14 cases (144 → 158), all regression cover for the
+above: the three lens groups replayed byte-for-byte at both lever positions, the
+AF self-contradiction pinned explicitly, `get_lens_state().focused` in MF, the
+captured 400 bytes, the fault-clearing scope, and the CLI driven end to end
+against the simulator — the first CLI coverage in the project, which is how the
+`--download` bug had survived.
+
+One of them is a standing audit rather than a single case: it diffs every
+response the simulator computes against the capture for the same scenario, as
+bytes. Both fidelity bugs above were invisible to a parsed-JSON assertion.
+
+### Still to do before 1.2.0
+Downstream re-verification. SPTFS soaked `rc1`; it has not seen any of the above.
+Promotion to stable waits on that, and the 1.2.0 entry will fold this one in.
+
 ## [1.2.0rc1] — 2026-07-29
 
 Feature-complete for the 1.2 line, and the simulator's public API is frozen
