@@ -1055,3 +1055,186 @@ def test_shipped_pytest_fixture_works(ks2_simulator):
     assert ks2_simulator.port > 0
     cam = ks2_simulator.client()
     assert cam.ping() is True
+
+
+# --- the lens read groups follow the AF/MF lever ---------------------------
+#
+# Regression cover for a fidelity bug found in the 1.2.0 sweep: these three
+# bodies were derived from a "MF means focused" rule instead of replayed, which
+# got variables/lens exactly backwards in AF and left status/lens pinned to the
+# AF capture whichever way the lever was thrown. The captures for both positions
+# had shipped in the wheel all along, unread.
+
+def _raw_get(server, path):
+    """The response body as bytes, bypassing the client's JSON parsing."""
+    return requests.get(f"{server.base_url}{path}", timeout=10).content
+
+
+@pytest.mark.parametrize("group,path", [
+    ("params", "/v1/params/lens"),
+    ("variables", "/v1/variables/lens"),
+    ("status", "/v1/status/lens"),
+])
+@pytest.mark.parametrize("mode", ["af", "mf"])
+def test_lens_reads_replay_the_capture_for_that_lever_position(
+        server, group, path, mode):
+    from pyks2.testing.simulator import LENS_FIXTURES
+
+    server.simulator.set_focus_mode(mode)
+    assert _raw_get(server, path) == fixture_bytes(LENS_FIXTURES[mode][group])
+
+
+def test_variables_lens_reports_focused_true_in_af_like_the_camera(server):
+    """The camera contradicts itself here, and that is the point: in AF it says
+    focused=false on status/lens and props/lens but focused=TRUE on
+    variables/lens. No rule reproduces that, so each is replayed."""
+    cam = server.client()
+    assert cam.variables("lens")["focused"] is True
+    assert cam.status("lens")["focused"] is False
+    assert cam.props("lens")["focused"] is False
+
+
+def test_mf_lever_makes_status_lens_report_focused(server):
+    """``get_lens_state()`` reads ``focused`` from status/lens, so this is what
+    a downstream caller actually sees when the lever is on MF."""
+    cam, sim = server.client(), server.simulator
+    assert cam.get_lens_state().focused is False
+
+    sim.set_focus_mode("mf")
+    lens = cam.get_lens_state()
+    assert lens.focus_mode == "mf"
+    assert lens.focused is True, "MF was captured as focused=true"
+
+
+def test_lens_fixture_names_the_group_it_cannot_serve(server):
+    with pytest.raises(KeyError) as e:
+        server.simulator.lens_fixture("props")
+    assert "no captured lens fixture" in str(e.value)
+
+
+# --- an illegal parameter value serves the captured refusal ---------------
+
+def test_illegal_param_value_returns_the_captured_400_bytes(server):
+    """The camera formats error bodies unlike its data bodies — no line break
+    after the comma — so this refusal has to be the captured file, not one
+    rebuilt by camera_json(). It was rebuilt, and differed by two bytes."""
+    body = _raw_post(server, "/v1/params/camera", "av=99.9", method="PUT")
+    assert body == fixture_bytes("error-400-bad-request.json")
+
+    cam = server.client()
+    with pytest.raises(KS2APIError) as e:
+        cam.set_camera_params(av="99.9")
+    assert e.value.err_code == 400
+
+
+def _raw_post(server, path, body, method="POST"):
+    return requests.request(
+        method, f"{server.base_url}{path}", data=body, timeout=10,
+        headers={"Content-Type": "application/x-www-form-urlencoded"}).content
+
+
+def test_clearing_one_path_leaves_the_stream_drop_alone(server):
+    """``clear_faults(path)`` used to cancel drop_stream_after() as a side
+    effect, because the stream drop is not keyed on a path."""
+    cam, sim = server.client(), server.simulator
+    sim.drop_stream_after(2)
+    sim.fail(paths.PING)
+
+    sim.clear_faults(paths.PING)
+    assert cam.ping() is True, "the ping fault should be gone"
+
+    seen = 0
+    with pytest.raises(requests.exceptions.RequestException):
+        for _ in cam.iter_liveview_frames(max_frames=10):
+            seen += 1
+    assert seen == 2, "the stream drop should have survived"
+
+    sim.clear_faults()
+    assert len(list(cam.iter_liveview_frames(max_frames=3))) == 3
+
+
+# --- the CLI, end to end against the simulator ----------------------------
+
+def test_cli_download_implies_waiting_for_the_file(server, tmp_path, capsys):
+    """``pyks2 shoot --download out.dng`` without ``--wait`` used to fire the
+    shutter and silently skip the download — the flag was only read inside the
+    --wait branch, so it looked like a failed download rather than a no-op."""
+    from pyks2.cli import main
+
+    out = tmp_path / "shot.dng"
+    rc = main(["--ip", server.host_port, "shoot", "--af", "off",
+               "--download", str(out)])
+    assert rc == 0
+    assert out.exists() and out.stat().st_size > 1000
+    printed = capsys.readouterr().out
+    assert "captured:" in printed
+    assert str(out) in printed
+
+
+def test_cli_ping_and_info_work_against_the_simulator(server, capsys):
+    from pyks2.cli import main
+
+    assert main(["--ip", server.host_port, "ping"]) == 0
+    assert "OK" in capsys.readouterr().out
+
+    assert main(["--ip", server.host_port, "info"]) == 0
+    printed = capsys.readouterr().out
+    assert "PENTAX K-S2" in printed
+    assert "firmware" in printed
+
+
+# --- every response the simulator computes, against its capture ------------
+
+def test_no_computed_response_diverges_from_its_capture(server):
+    """The audit that would have caught both 1.2.0 fidelity bugs.
+
+    The simulator serves most bodies verbatim but builds the ones that depend on
+    state, and a built body is where fabricated bytes can creep in. For every
+    scenario that has a capture behind it, the bytes on the wire must be that
+    capture — compared as bytes, because the two bugs this replaces were both
+    invisible to a parsed-JSON assertion: one was a formatting difference, the
+    other a single boolean.
+    """
+    cases = [
+        # (method, path, body, fixture)
+        ("GET", "/v1/ping", None, "ping.json"),
+        ("GET", "/v1/apis", None, "apis.json"),
+        ("GET", "/v1/props", None, "props.json"),
+        ("GET", "/v1/props/camera", None, "props-camera.json"),
+        ("GET", "/v1/props/lens", None, "props-lens.json"),
+        ("GET", "/v1/props/device", None, "props-device.json"),
+        ("GET", "/v1/constants/camera", None, "constants-camera.json"),
+        ("GET", "/v1/constants/device", None, "constants-device.json"),
+        ("GET", "/v1/params/camera", None, "params-camera.json"),
+        ("GET", "/v1/params/lens", None, "params-lens.json"),
+        ("GET", "/v1/params/device", None, "params-device.json"),
+        ("GET", "/v1/variables/camera", None, "variables-camera.json"),
+        ("GET", "/v1/variables/lens", None, "variables-lens.json"),
+        ("GET", "/v1/status/camera", None, "status-camera.json"),
+        ("GET", "/v1/status/lens", None, "status-lens.json"),
+        ("GET", "/v1/status/device", None, "status-device.json"),
+        ("GET", "/v1/photos", None, "photos-listing.json"),
+        ("POST", "/v1/camera/shoot", "af=off", "camera-shoot-response.json"),
+        ("POST", "/v1/lens/focus", "pos=52,52", "lens-focus-response.json"),
+        # every refusal is a captured body, never a rebuilt one
+        ("GET", "/v1/nope", None, "error-400-bad-request.json"),
+        ("PUT", "/v1/params/lens", "focusMode=mf", "error-400-bad-request.json"),
+        ("PUT", "/v1/params/camera", "av=99.9", "error-400-bad-request.json"),
+        ("GET", "/v1/photos/999_9999/X.DNG/info", None,
+         "error-404-not-found.json"),
+        ("POST", "/v1/liveview/zoom", "", "error-412-precondition.json"),
+        ("POST", "/v1/camera/shoot/start", "af=off",
+         "error-412-precondition.json"),
+    ]
+    divergent = []
+    for method, path, body, fixture in cases:
+        got = requests.request(
+            method, f"{server.base_url}{path}", data=body, timeout=10,
+            headers={"Content-Type": "application/x-www-form-urlencoded"}
+        ).content
+        if got != fixture_bytes(fixture):
+            divergent.append(f"{method} {path} != {fixture}\n"
+                             f"      got  {got[:100]!r}\n"
+                             f"      want {fixture_bytes(fixture)[:100]!r}")
+    assert not divergent, ("these responses are not the captured bytes:\n  "
+                           + "\n  ".join(divergent))

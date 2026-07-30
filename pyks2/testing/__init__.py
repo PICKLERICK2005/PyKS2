@@ -41,6 +41,7 @@ __all__ = [
     "camera_json",
     "ERROR_BODIES",
     "ENDPOINTS",
+    "LENS_FIXTURES",
     "paths",
     "MJPEG_CONTENT_TYPE",
     "CAMERA_HEADERS",
