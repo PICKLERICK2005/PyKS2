@@ -709,8 +709,14 @@ class K_S2_WiFi:
         return n
 
     def preview_bytes(self, path: str) -> bytes:
-        """Return the ~54KB JPEG preview (size=view) as bytes, in memory."""
+        """Return the ~54KB JPEG preview (size=view) as bytes, in memory.
+
+        Args:
+            path: 'DIR/FILE'.
+        """
         d, _, f = path.partition("/")
+        if not (d and f):
+            raise ValueError(f"path must be 'DIR/FILE', got {path!r}")
         ep = C.EP.PHOTO_FILE.format(dir=quote(d), file=quote(f)) + "?size=view"
         resp = self._request("GET", ep, timeout=30.0, stream=True, raw=True)
         data = resp.content
