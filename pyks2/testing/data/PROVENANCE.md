@@ -48,10 +48,25 @@ bytes exactly.
 (`"storages" : [`, space before the colon) — so it and every other static
 response are served verbatim instead.
 
-The one generated body with no fixture is `latest/info` before any capture,
-`{"errCode": 200,\n "errMsg": "OK",\n "captured": false}`. Re-capturing that
-state needs a power cycle, so it is asserted against the observed bytes in the
-tests rather than stored as a file.
+Two generated bodies have no fixture behind them:
+
+- **`latest/info` before any capture**, `{"errCode": 200,\n "errMsg": "OK",\n
+  "captured": false}`. Re-capturing that state needs a power cycle, so it is
+  asserted against the observed bytes in the tests rather than stored as a file.
+- **`POST /v1/liveview/zoom` succeeding** (200 with a stream running). The *gate*
+  was measured exhaustively — 412 without a stream, 200 with one, whatever the
+  body — but the success body's bytes were not kept, so they are **inferred**:
+  `camera_json({"errCode": 200, "errMsg": "OK"})`. That is the house style of
+  every captured two-member OK body except `camera-shoot-finish-bulb.json`, which
+  is compact. Treat the zoom success body's *formatting* as unverified; its
+  `errCode` is not.
+
+Error bodies are never generated. The firmware formats them unlike its data
+bodies — `{"errCode": 400,"errMsg": "Bad Request"}`, with no break after the
+comma — so `camera_json()` does not reproduce them, and every refusal the
+simulator issues serves the captured file. (An illegal `PUT /v1/params/camera`
+value used to rebuild its 400 and so differed from the capture by two bytes;
+fixed in 1.2.0.)
 
 ## Where the simulator is not the camera
 
@@ -109,9 +124,20 @@ writability signal into fiction.
 | `params-camera.json`, `variables-camera.json` | dial on `M`, all four lists populated |
 | `params-camera-bulb.json`, `variables-camera-bulb.json` | dial on **`B`**: `tvList` and `xvList` **empty** — the camera owns shutter and exposure compensation in Bulb |
 | `camera-shoot-start-bulb.json`, `camera-shoot-finish-bulb.json` | a real 2 s bulb exposure on `B`; the resulting frame reported `tv: "198.100"` (1.98 s) |
-| `params-lens.json`, `variables-lens.json` | AF/MF switch on **AF** |
+| `params-lens.json`, `variables-lens.json`, `status-lens.json` | AF/MF switch on **AF** |
 | `params-lens-mf.json`, `variables-lens-mf.json`, `status-lens-mf.json` | AF/MF switch on **MF** |
 | `lens-focus-response.json` | `POST /v1/lens/focus` succeeding in AF |
+
+`set_focus_mode()` switches all three lens read groups to the matching capture,
+which is why both sets exist. They are replayed rather than derived because the
+camera contradicts itself: in **AF** it reports `focused: false` on `status/lens`
+and `props/lens` but `focused: true` on `variables/lens`, in one physical state.
+In **MF** all three say `true`. No rule reproduces that, and 1.2.0rc1 tried to —
+it derived `focused` as "MF means focused", which inverted `variables/lens` in AF
+and left `status/lens` on the AF capture regardless of the lever.
+
+`props/lens` is the exception: it is the legacy flat superset and was only
+captured in AF, so it does not follow the lever. Nothing was invented to make it.
 
 One error body serves several scenarios because the camera really does send the
 same bytes for all of them — verified by hash. `error-412-precondition.json` is
@@ -146,5 +172,9 @@ match what `examples/` has always used.
   it cannot be forced without filling it. There is deliberately no `card_full`
   entry in `ERROR_BODIES` — inventing that body would break the rule that every
   byte on the wire is real. Asking for it raises with a pointer to
-  `status-device-cardfull.json`, a genuine capture of a nearly-full card
-  (`remain: 1`), which is a *state* rather than a failure response.
+  `examples/status-device-cardfull.json` **in the repo**, a genuine capture of a
+  nearly-full card (`remain: 1`). It is a *state* rather than a failure response,
+  so it is not shipped here as serving data — and its formatting was normalised
+  when it was written into `examples/`, so its values are real while its bytes
+  are not the wire bytes. That is also why it is not a fixture: promoting it
+  would mean re-encoding it and calling the result captured.
