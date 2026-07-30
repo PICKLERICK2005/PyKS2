@@ -83,6 +83,7 @@ __all__ = [
     "camera_json",
     "ERROR_BODIES",
     "ENDPOINTS",
+    "LENS_FIXTURES",
     "paths",
     "MJPEG_CONTENT_TYPE",
     "CAMERA_HEADERS",
@@ -186,7 +187,10 @@ FAST = Timing(scale=0.0)
 
 #: uvicorn would otherwise add ``server: uvicorn`` in front of the camera's own
 #: ``Server: server``, and a ``Date`` header the camera never sends.
-_UVICORN_HEADER_OPTS = {"server_header": False, "date_header": False}
+#: Typed loosely because it is splatted into uvicorn's very precisely typed
+#: signature, where a ``dict[str, bool]`` is rejected for every other keyword.
+_UVICORN_HEADER_OPTS: dict[str, Any] = {"server_header": False,
+                                        "date_header": False}
 
 
 def _require() -> None:
@@ -244,8 +248,8 @@ _STATIC: dict[str, str] = {
     "/v1/params": "params.json",
     "/v1/variables": "variables.json",
     "/v1/status": "status.json",
-    # NB /v1/params/lens and /v1/variables/lens are NOT here: they carry
-    # focusMode, so they are served from state instead.
+    # NB the three lens read groups are NOT here: they vary with the AF/MF
+    # lever, so they are served from LENS_FIXTURES instead.
     "/v1/params/liveview": "params-liveview.json",
     "/v1/params/device": "params-device.json",
     "/v1/constants/camera": "constants-camera.json",
@@ -255,10 +259,35 @@ _STATIC: dict[str, str] = {
     "/v1/variables/liveview": "variables-liveview.json",
     "/v1/variables/device": "variables-device.json",
     "/v1/status/camera": "status-camera.json",
-    "/v1/status/lens": "status-lens.json",
     "/v1/status/liveview": "status-liveview.json",
     "/v1/status/device": "status-device.json",
     "/v1/lens/focus": "lens-focus-response.json",
+}
+
+#: The lens read groups, captured at **both** AF/MF lever positions, so each is
+#: replayed verbatim rather than derived.
+#:
+#: Deriving them is what a rule cannot do: in AF the camera reports
+#: ``focused: false`` on ``status/lens`` and ``props/lens`` but ``focused: true``
+#: on ``variables/lens`` — the same physical state, two different answers from
+#: its own endpoints. In MF all of them report ``true``. Earlier versions
+#: computed ``focused`` as "MF means focused", which got AF exactly backwards on
+#: ``variables/lens`` and left ``status/lens`` stuck on the AF capture whatever
+#: the lever said.
+#:
+#: ``props/lens`` is absent: it is the legacy flat superset and was only ever
+#: captured in AF, so it stays in :data:`_STATIC`. See data/PROVENANCE.md.
+LENS_FIXTURES: dict[str, dict[str, str]] = {
+    "af": {
+        "params": "params-lens.json",
+        "variables": "variables-lens.json",
+        "status": "status-lens.json",
+    },
+    "mf": {
+        "params": "params-lens-mf.json",
+        "variables": "variables-lens-mf.json",
+        "status": "status-lens-mf.json",
+    },
 }
 
 # Which capability list gates each exposure value (PROTOCOL.md §6.5).
@@ -566,8 +595,17 @@ class CameraSimulator:
         self._params["exposureMode"] = mode
 
     def set_focus_mode(self, mode: str) -> None:
-        """``"af"`` or ``"mf"``. In MF the camera refuses ``af=auto`` with a 412
-        and ``/v1/lens/focus`` fails — both measured."""
+        """Emulate the physical AF/MF lever: ``"af"`` or ``"mf"``.
+
+        Switches ``params/lens``, ``variables/lens`` and ``status/lens`` to the
+        capture taken at that lever position (:data:`LENS_FIXTURES`), so
+        ``focused`` reads exactly as the camera reported it. In MF the camera
+        also refuses ``af=auto`` with a 412 and fails ``/v1/lens/focus`` — both
+        measured.
+
+        ``props/lens``, the legacy flat superset, was only captured in AF and so
+        does not follow; it is the one lens read that stays put.
+        """
         if mode not in ("af", "mf"):
             raise ValueError(f"focus mode must be 'af' or 'mf', got {mode!r}")
         self.focus_mode = mode
@@ -653,8 +691,11 @@ class CameraSimulator:
             if error in ("card_full", "cardfull", "card-full"):
                 raise ValueError(
                     "card-full was never captured on hardware; use the "
-                    "near-full status state (status-device-cardfull.json, "
-                    "remain: 1) instead."
+                    "near-full status state instead — a genuine capture of a "
+                    "card with remain: 1, in the repo's "
+                    "examples/status-device-cardfull.json. It is a state, not "
+                    "a failure response, so it is not shipped as serving data; "
+                    "seed_photos() plus that body is how you exercise the path."
                 )
             raise ValueError(
                 f"unknown error {error!r}; captured errors: "
@@ -684,12 +725,17 @@ class CameraSimulator:
         self._stream_drop_after = frames
 
     def clear_faults(self, path: str | None = None) -> None:
-        """Forget queued faults, all of them or just one path's."""
+        """Forget queued faults, all of them or just one path's.
+
+        Clearing everything also cancels :meth:`drop_stream_after`. Clearing a
+        single path does not: the stream drop is not keyed on a path, so
+        ``clear_faults(paths.PING)`` used to switch it off as a side effect.
+        """
         if path is None:
             self._faults.clear()
+            self._stream_drop_after = None
         else:
             self._faults = [f for f in self._faults if f.path != path]
-        self._stream_drop_after = None
 
     def _take_fault(self, path: str) -> _Fault | None:
         """Pop the next applicable fault for ``path``, if any."""
@@ -803,14 +849,26 @@ class CameraSimulator:
         """The mode-dial position the simulator is emulating."""
         return str(self._params.get("exposureMode", "M"))
 
+    def lens_fixture(self, group: str) -> str:
+        """Which captured fixture answers a lens read at the current lever
+        position. ``group`` is ``"params"``, ``"variables"`` or ``"status"``."""
+        try:
+            return LENS_FIXTURES[self.focus_mode][group]
+        except KeyError:
+            raise KeyError(
+                f"no captured lens fixture for group={group!r} at "
+                f"focus_mode={self.focus_mode!r}; groups: "
+                f"{sorted(LENS_FIXTURES['af'])}"
+            ) from None
+
     def params_lens(self) -> dict[str, Any]:
-        return {**_OK, "focusMode": self.focus_mode}
+        return fixture_json(self.lens_fixture("params"))
 
     def variables_lens(self) -> dict[str, Any]:
-        # In MF the camera reports focused=true (the ring is wherever you left
-        # it); in AF it reports false until something drives focus.
-        return {**_OK, "focused": self.focus_mode == "mf",
-                "focusCenters": [], "focusMode": self.focus_mode}
+        return fixture_json(self.lens_fixture("variables"))
+
+    def status_lens(self) -> dict[str, Any]:
+        return fixture_json(self.lens_fixture("status"))
 
     def params_camera(self) -> dict[str, Any]:
         return {**_OK, **self._params}
@@ -876,7 +934,8 @@ def _check_endpoint_coverage(routes: list[Any]) -> None:
     without a symbolic name is caught the first time anyone starts the
     simulator — the fault API's constants cannot silently miss an endpoint.
     """
-    routed = {getattr(r, "path", None) for r in routes} - {None}
+    routed: set[str] = {p for p in (getattr(r, "path", None) for r in routes)
+                        if p is not None}
     faultable = routed - set(_UNFAULTABLE)
     named = set(ENDPOINTS.values())
     unnamed = faultable - named
@@ -926,6 +985,13 @@ def create_app(sim: CameraSimulator | None = None) -> Any:
             body = (await request.body()).decode("utf-8", "replace")
             payload, changed = sim.put_params(body)
             await _delay(sim.timing.put_params_ms)
+            if payload.get("errCode") != 200:
+                # Serve the captured refusal, not a rebuilt one: the camera's
+                # error bodies are formatted differently from its data bodies
+                # (`{"errCode": 400,"errMsg": ...}` — no break after the comma),
+                # so encoding this one would put bytes on the wire that the
+                # camera never sent for the very case it was captured for.
+                return _json(None, "error-400-bad-request.json")
             if changed:
                 await sim.broadcast("camera")
             return _json(payload)
@@ -1001,11 +1067,15 @@ def create_app(sim: CameraSimulator | None = None) -> Any:
             # the value does not change.
             return _json(None, "error-400-bad-request.json")
         await _delay(sim.timing.group_ms)
-        return _json(sim.params_lens())
+        return _json(None, sim.lens_fixture("params"))
 
     async def variables_lens(request) -> Any:
         await _delay(sim.timing.group_ms)
-        return _json(sim.variables_lens())
+        return _json(None, sim.lens_fixture("variables"))
+
+    async def status_lens(request) -> Any:
+        await _delay(sim.timing.group_ms)
+        return _json(None, sim.lens_fixture("status"))
 
     async def lens_focus(request) -> Any:
         await request.body()
@@ -1175,12 +1245,14 @@ def create_app(sim: CameraSimulator | None = None) -> Any:
                         media_type="text/html",
                         headers={"Server": "server", "Connection": "close"})
 
-    routes = [Route(p, static, methods=["GET"]) for p in _STATIC]
+    # list[Any] because the table mixes Route with WebSocketRoute.
+    routes: list[Any] = [Route(p, static, methods=["GET"]) for p in _STATIC]
     routes += [
         Route("/v1/params/camera", params_camera, methods=["GET", "PUT"]),
         Route("/v1/variables/camera", variables_camera, methods=["GET"]),
         Route("/v1/params/lens", params_lens, methods=["GET", "PUT"]),
         Route("/v1/variables/lens", variables_lens, methods=["GET"]),
+        Route("/v1/status/lens", status_lens, methods=["GET"]),
         Route("/v1/lens/focus", lens_focus, methods=["POST"]),
         # Bulb: these must precede /v1/camera/shoot so the longer paths win.
         Route("/v1/camera/shoot/start", bulb_start, methods=["POST"]),
