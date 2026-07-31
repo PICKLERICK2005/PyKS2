@@ -2,8 +2,7 @@
 import pytest
 
 from pyks2._mjpeg import MjpegFrameParser
-from tests.conftest import LIVEVIEW_FRAMES, LIVEVIEW_BODY
-
+from tests.conftest import LIVEVIEW_BODY, LIVEVIEW_FRAMES
 
 # --- pure parser -------------------------------------------------------
 

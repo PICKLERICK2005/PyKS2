@@ -3,3 +3,7 @@ include LICENSE
 recursive-include docs *.md *.yml
 recursive-include examples *.json *.jsonl *.md *.bin
 recursive-include tests *.py
+# The simulator's serving data. Also declared as package-data in pyproject so
+# it lands in the wheel, not just the sdist. Wildcard, not an extension list, so
+# a new fixture type cannot go missing from the distribution unnoticed.
+graft pyks2/testing/data

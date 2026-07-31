@@ -3,6 +3,447 @@
 All notable changes to **pyks2** are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] — 2026-07-31
+
+**The 1.2 line, stable.** One headline feature — a shipped, protocol-level camera
+simulator — plus the client fixes and protocol corrections that building it
+turned up. Consolidates `1.2.0b1`, `b2`, `rc1` and `rc2`; the entries below keep
+the blow-by-blow.
+
+Upgrading from `1.1.0` is a drop-in for camera code. The only breaking change is
+the Python floor: **3.9 is no longer supported.**
+
+### Added
+- **A shipped camera simulator, `pyks2[testing]`.** `pyks2.testing` serves a
+  protocol-level fake K-S2 over a real socket, so the *actual* client — sync and
+  async — runs end to end with no camera on the bench. This is **public,
+  supported surface**, not internal scaffolding: downstream libraries import it
+  to test against a faithful camera instead of mocking pyks2 out.
+
+  ```python
+  from pyks2.testing import SimulatorServer
+
+  with SimulatorServer() as server:
+      cam = server.client()          # a real K_S2_WiFi
+      info = cam.capture(af="off")   # shoot -> file appears -> download
+  ```
+
+  Also `python -m pyks2.testing.simulator --port 8080`, and `ks2_simulator` /
+  `ks2_simulator_realistic` pytest fixtures registered through a `pytest11`
+  entry point — installing the extra is the whole setup, no `conftest.py`.
+
+  **Every response body is replayed from bytes captured off a physical K-S2**
+  (firmware 01.10), shipped as package data so it works from a plain
+  `pip install`. It reproduces the protocol's awkward parts rather than an
+  idealised API: `errCode` in the body under HTTP 200 (Law 1), `/v1/photos`
+  oldest-first with `?limit` as a head-limit only, the empty-list writability
+  signal, one `storage` event per capture, no "latest" photo until something is
+  shot this power session, and the 412/200 gating on `/v1/liveview/zoom`. Its
+  card is a real 358-file listing across six directories, RAW+JPEG pair included.
+- **Modelled response latency** (`Timing`), from measured medians — ~103 ms for
+  `/v1/props`, ~1.5 s for a full `/v1/photos`, ~1.9 s shutter → `storage` event,
+  ~830 ms for the first live view frame while the mirror flips. Realistic is the
+  **default**, because a mock that answers instantly hides the timeout and
+  ordering bugs a fake camera exists to catch; `timing=FAST` removes it.
+- **Fault injection**: `fail(path, error, times=)` serves a real captured error
+  body, `drop()`, `delay()` and `drop_stream_after()` reproduce transport
+  misbehaviour, `clear_faults()` resets. `ERROR_BODIES` advertises only errors
+  that were actually captured.
+- **A public configuration API** — `set_exposure_mode()`, `set_focus_mode()`,
+  `set_camera_controlled()`, `set_user_controlled()`, `writable()`,
+  `seed_photos()`, `add_photo()` — so nothing reaches into private attributes.
+- **Symbolic endpoint constants** (`pyks2.testing.paths`), so downstream fault
+  tests key on `paths.SHOOT` rather than a URL string. `create_app()` **refuses
+  to start** if the route table and the constants ever disagree.
+- Bulb is modelled properly: `shoot/start`/`shoot/finish` gated on the dial being
+  on `B`, a plain `shoot` on `B` returning 412, and a completed exposure writing a
+  file and firing one `storage` event.
+
+### Fixed — the client
+- **`K_S2_WiFi` now accepts an address with a port** (`"127.0.0.1:8080"`). `ip`
+  was interpreted inconsistently: HTTP interpolated it into the URL, but the
+  `/v1/changes` clients needed host and port separately — the async one built
+  `ws://host:8080:80/v1/changes`. There was no working way to point the event
+  stream anywhere but port 80. Invisible against the camera, which is always
+  `192.168.0.1:80`.
+- **`pyks2 shoot --download OUT` silently skipped the download** unless `--wait`
+  was also passed — the flag was only read inside that branch, so the shutter
+  fired and nothing was fetched or reported. It now implies the wait.
+- **`preview_bytes()` accepted a malformed path** and built a nonsense URL from
+  it, where `photo_info()` and `download()` both raise `ValueError`.
+- **`latest_info()` and `wait_for_capture()` were documented wrong.** "Latest"
+  means latest *this power session*, not newest on the card: with 358 files
+  present, a freshly powered camera answers `captured: false` with no
+  `dir`/`file`.
+- Dropped the deprecated `asyncio.get_event_loop()`, and kept a strong reference
+  to the background capture task that asyncio only holds weakly. The suite runs
+  under `-W error::DeprecationWarning`.
+
+### Fixed — protocol corrections
+Both measured, both correcting this project's own earlier write-up:
+- **`/v1/liveview/zoom` gating.** PROTOCOL.md §9 claimed an empty body returned
+  200. It does not: with no stream running, no body, an empty body and `zoom=1`
+  all return 412; with a stream running, all three return 200. The gate is purely
+  whether live view is streaming.
+- **Live view serves one stream at a time.** Opening a second delivers one more
+  frame to the first and then closes it; the first never recovers. An earlier
+  note claiming the camera "permits concurrency" came from a flawed test that
+  only read the second stream's headers.
+
+### Changed
+- **Python 3.9 is dropped**; `requires-python` is now `>=3.10`. It was already
+  untenable — current `starlette` and `uvicorn` both require 3.10, so
+  `pip install pyks2[testing]` on 3.9 either failed to resolve or silently
+  backslid to untested versions.
+- **CI runs on `develop` as well as `main`**, across 3.10–3.13 on Linux plus a
+  Windows leg, and gates lint. The ruff rule set is pinned explicitly rather than
+  inherited from whatever ruff CI resolves, and `publish.yml` now runs the same
+  checks as branch CI — a publish pipeline that tests less than branch CI is how
+  a broken tag gets cut.
+- `.gitattributes` normalises source line endings while keeping the captured
+  fixtures byte-exact.
+
+### Verification
+The simulator is measured against the camera rather than written from the notes:
+the same raw-socket probe ran against the physical body and against the
+simulator and the results were diffed — **40 of 40 checks match**, wire behaviour
+and latency. On top of that, every response the simulator computes is diffed
+against the captured bytes for the same scenario, which is a standing test rather
+than a one-off, because two divergences turned up *outside* what the probe
+compared. `docs/VERIFICATION.md` records both, and the scope of each.
+
+158 tests, up from 70 at 1.1.0. `pyks2/testing/data/PROVENANCE.md` documents every
+fixture's origin, labels the two generated bodies as generated and the one
+inferred body as inferred, names the three deliberate deviations from the camera,
+and records what was observed but **not** modelled — notably that `camera` events
+are intermittent on real hardware, so callers should poll after writes rather
+than trust them.
+
+## [1.2.0rc2] — 2026-07-30
+
+A second release candidate, not the stable release, and the reason is process
+rather than doubt about the code. `1.2.0rc1` was soaked by a real downstream
+consumer (SPTFS); everything below landed *after* that soak, so no consumer has
+yet run the bytes that would become 1.2.0. Two of these fixes are in the client
+itself, not the simulator, so "the simulator got more faithful" does not cover
+it. rc2 exists to be re-verified from the outside before promotion.
+
+`rc1` cannot be re-cut: it is published and immutable, and it carries the
+superseded bytes.
+
+No API changed, so anything written against `rc1` keeps working — but if you
+depend on `get_lens_state().focused`, read the first entry under *Fixed: the
+client*.
+
+### Fixed: the client (`pyks2`)
+These reach anyone using the library, independently of the simulator.
+
+- **`get_lens_state().focused` was wrong in MF.** Strictly it was the simulator
+  that lied, but it lied about the value a client reads, so any downstream test
+  asserting on `focused` in MF was asserting the wrong thing and passing. Detail
+  in the simulator section below.
+- **`pyks2 shoot --download OUT` silently skipped the download** unless `--wait`
+  was also passed: the flag was only read inside the `--wait` branch, so the
+  shutter fired and nothing was fetched or reported. It reads as a download that
+  failed rather than one that never ran. `--download` now implies the wait, since
+  there is nothing to fetch until the file lands.
+- **`preview_bytes()` accepted a malformed path** and built a nonsense URL from
+  it, where `photo_info()` and `download()` both raise `ValueError` on the same
+  input. It now raises too.
+
+### Fixed: the simulator (`pyks2.testing`)
+- **The lens read groups now replay their captures instead of deriving them.**
+  `params/lens`, `variables/lens` and `status/lens` were computed from a "MF
+  means focused" rule, and the rule was wrong in both directions. The camera
+  contradicts *itself* here: in AF it reports `focused: false` on `status/lens`
+  and `props/lens` but `focused: true` on `variables/lens`, in one physical
+  state; in MF all three report `true`. So `variables/lens` served `false` in AF
+  where the capture says `true`, and `status/lens` stayed on the AF capture
+  however the lever was set — meaning `get_lens_state().focused` was wrong in MF,
+  which is exactly the state MF users are in. `set_focus_mode()` now switches all
+  three to the matching capture. The MF captures had shipped in the wheel since
+  `rc1` and were never read: `params-lens-mf.json`, `variables-lens-mf.json` and
+  `status-lens-mf.json`. `props/lens` was only ever captured in AF and so does
+  not follow the lever; nothing was invented to make it.
+- **An illegal `PUT /v1/params/camera` value served rebuilt bytes.** It was the
+  one refusal the simulator encoded with `camera_json()` rather than replaying,
+  and it differed from the capture: the firmware formats error bodies unlike its
+  data bodies — `{"errCode": 400,"errMsg": "Bad Request"}`, no break after the
+  comma — so the two were two bytes apart on a path `PROVENANCE.md` explicitly
+  claims the captured 400 covers. Every refusal now serves the captured file, and
+  a test compares the bytes. An audit of every other computed response against
+  its capture found no further divergence.
+- `clear_faults(path)` cancelled `drop_stream_after()` as a side effect, even
+  though the stream drop is not keyed on a path. Only `clear_faults()` does now.
+- `mypy pyks2` is clean again (25 errors → 0). All of them came from splatting a
+  `dict[str, bool]` into uvicorn's precisely typed signature, plus a route list
+  that mixes `Route` with `WebSocketRoute`. It is configured in `pyproject.toml`
+  but not gated in CI, so this had gone unnoticed.
+
+### Documentation
+- `PROVENANCE.md` now labels **both** generated bodies, not one. The
+  `/v1/liveview/zoom` success body was inferred — the gate was measured
+  exhaustively, the 200 body's bytes were not kept — and that is now recorded as
+  inferred rather than passed off as captured.
+- The card-full guard pointed at `status-device-cardfull.json` as if it were
+  available to an installed user. It is in the repo's `examples/`, is a *state*
+  rather than a failure response, and its formatting was normalised when it was
+  written there — so its values are real but its bytes are not wire bytes, which
+  is also why it is not promoted to a fixture. The message and `PROVENANCE.md`
+  both say so now.
+
+### Testing
+Nine new test functions, 14 cases (144 → 158), all regression cover for the
+above: the three lens groups replayed byte-for-byte at both lever positions, the
+AF self-contradiction pinned explicitly, `get_lens_state().focused` in MF, the
+captured 400 bytes, the fault-clearing scope, and the CLI driven end to end
+against the simulator — the first CLI coverage in the project, which is how the
+`--download` bug had survived.
+
+One of them is a standing audit rather than a single case: it diffs every
+response the simulator computes against the capture for the same scenario, as
+bytes. Both fidelity bugs above were invisible to a parsed-JSON assertion.
+
+### Still to do before 1.2.0
+Downstream re-verification. SPTFS soaked `rc1`; it has not seen any of the above.
+Promotion to stable waits on that, and the 1.2.0 entry will fold this one in.
+
+## [1.2.0rc1] — 2026-07-29
+
+Feature-complete for the 1.2 line, and the simulator's public API is frozen
+pending final downstream validation. Everything here is measured: this was the
+last session with the physical camera, so the read surface was swept
+exhaustively and every remaining hardware-dependent response captured.
+
+### Added
+- **The whole client surface now works against the simulator.** Nine public
+  calls previously failed. Bulb (`/v1/camera/shoot/start` + `/finish`) was not
+  implemented at all; `/v1/lens/focus` was registered GET-only while the client
+  POSTs to it; and ten group reads (the bare `/v1/constants`, `/v1/params`,
+  `/v1/variables`, `/v1/status` roots plus `constants/lens`,
+  `constants/liveview`, `params/liveview`, `variables/lens`,
+  `variables/liveview`, `variables/device`) existed in `examples/` but had never
+  been copied into package data. A new test iterates the client's entire
+  camera-facing surface and asserts nothing fails unexpectedly, rather than
+  trusting a hand-written list.
+- **A public configuration API**, replacing the documented advice to poke
+  `sim._variables`:
+  `set_exposure_mode()`, `set_focus_mode()`, `set_camera_controlled()`,
+  `set_user_controlled()`, `writable()`, `seed_photos()`, `add_photo()`.
+  `set_exposure_mode()` accepts only `"M"` and `"B"` — the two dial positions
+  with a real captured capability set — because lists differ per mode and
+  inventing them would make the writability signal fiction.
+- **Symbolic endpoint constants** (`pyks2.testing.paths`) for the fault API, so
+  downstream tests are keyed on `paths.SHOOT` rather than `"/v1/camera/shoot"`
+  and are not coupled to pyks2's URL spellings. `paths.all()` enumerates every
+  fault-able endpoint, `ENDPOINTS` is the `NAME -> path` mapping behind it, and
+  `create_app()` **refuses to start** if the route table and the constants ever
+  disagree — so a new route cannot appear without a name. Raw path strings keep
+  working. `paths.PHOTO_FILE`/`PHOTO_INFO` are templated and match any photo,
+  while a concrete `/v1/photos/DIR/FILE` targets one.
+- **Fault injection.** `fail(path, error, times=)` returns a real captured error
+  body; `drop(path)`, `delay(path, seconds)` and `drop_stream_after(frames)`
+  reproduce transport misbehaviour; `clear_faults()` resets. `ERROR_BODIES`
+  advertises only errors that were actually captured — `"precondition"` (412),
+  `"bad_request"` (400), `"not_found"` (404), `"unhandled_method"` (a real HTTP
+  400 with an HTML body). There is deliberately **no card-full**: that response
+  was never captured and the simulator does not invent wire data. Both
+  faithfulness guards redirect rather than merely refusing — asking for
+  card-full points at the near-full `remain: 1` state, and an uncaptured
+  exposure mode points at `set_camera_controlled()`. The message text is pinned
+  by tests, so the guidance survives refactoring.
+- Bulb is modelled properly: `shoot/start` and `shoot/finish` are gated on the
+  dial being on `B`, a plain `shoot` on `B` returns 412, and a completed bulb
+  exposure writes a file and fires one `storage` event.
+
+### Fixed
+- **Live view serves one stream at a time.** Measured over two trials: opening a
+  second stream delivers one more frame to the first and then closes it, and the
+  first never recovers — the newest requester wins. The simulator served both
+  independently, which it no longer does. (An earlier note in this project
+  claiming the camera "permits concurrency" was based on a flawed test that only
+  read the second stream's headers.)
+- **In MF, `shoot af=auto` returns 412** — a hard refusal, not a silent no-op,
+  and no file is written. `POST /v1/lens/focus` fails in MF too, and writing
+  `focusMode` over WiFi returns 400 with the value unchanged. All measured.
+- `?limit=abc` is **ignored** and returns the full listing; the simulator was
+  answering errCode 400. An unrecognised `PUT` key is accepted and ignored;
+  the simulator was adding it to the params and firing a spurious `camera` event.
+- Replaced the deprecated `asyncio.get_event_loop()` and kept a strong reference
+  to the background capture task, which asyncio only holds weakly. The suite now
+  runs under `-W error::DeprecationWarning`.
+
+### Changed
+- **Python 3.9 is dropped**; `requires-python` is now `>=3.10`. It was already
+  untenable: current `starlette` and `uvicorn` both require 3.10, so
+  `pip install pyks2[testing]` on 3.9 either failed to resolve or silently
+  backslid to versions this code has never been tested against. The ruff target
+  and the classifiers move with it.
+- **CI runs on `develop`** as well as `main`, across 3.10–3.13 on Linux plus a
+  Windows leg, and runs lint. Every simulator change before this had been
+  verified on a single machine.
+- `.gitattributes` normalises source line endings while keeping the captured
+  fixtures byte-exact, verified with `git check-attr`.
+
+### Captured this session
+Bulb start/finish bodies and the genuine Bulb-mode empty-list state; the MF lens
+state and its refusals; `POST /v1/lens/focus` succeeding; the ten missing group
+reads; and an exhaustive 32-endpoint read sweep built from `pyks2.constants`
+itself, all of which returned 200. A 2 s bulb exposure reported
+`tv: "198.100"` — 1.98 s — independently corroborating the `tv` encoding.
+Identifying fields (`ssid`, `key`, `macAddress`, `serialNo`) are redacted to the
+repo's existing placeholders, and `PROVENANCE.md` labels those fixtures redacted
+rather than raw. It also records what was observed but deliberately **not**
+modelled: `camera` event delivery was intermittent (2 of 5 attempts), so the
+simulator emits reliably and callers are told not to depend on it.
+
+## [1.2.0b2] — 2026-07-29
+
+The simulator, measured against the camera instead of written from the notes.
+The same raw-socket probe was run against the physical body and against the
+simulator and the results diffed: **40 of 40 checks now match**, covering wire
+behaviour and response times. Full record in
+[`docs/VERIFICATION.md`](docs/VERIFICATION.md).
+
+Still beta for the same reason as `1.2.0b1` — the simulator's public API is not
+frozen yet, not because anything is unverified.
+
+### Fixed
+- **`/v1/liveview/zoom` gating was documented wrong.** PROTOCOL.md §9 claimed an
+  empty body returned `200`. Measuring it: with no stream running, all of no
+  body, an empty body and `zoom=1` returned `412`; with a stream running, all
+  three returned `200`. The gate is purely whether live view is streaming. §9
+  corrected and the simulator matches.
+- **`latest_info()` does not always report a file.** After a power cycle, with
+  358 files on the card, `/v1/photos/latest/info` returned `captured: false` with
+  no `dir`/`file` — "latest" means latest *this power session*, not newest on the
+  card. The `latest_info()` and `wait_for_capture()` docstrings said otherwise
+  and are corrected; the simulator now starts in that state.
+- **Captured fixtures were being corrupted by git.** With `core.autocrlf=true`,
+  the norm on Windows, a fresh clone rewrote every LF as CRLF: the `/v1/changes`
+  payload became 54 bytes instead of the 53 measured on the wire, and
+  `photos-listing.json` picked up 29 stray CRs. CI runs on Linux so it would
+  never have failed there. A `.gitattributes` now pins the fixture bytes;
+  `unhandled-method.html` needed the opposite treatment, since the camera really
+  does send CRLF in that body.
+- **Not every fixture type was reaching the wheel.** The package-data glob listed
+  extensions, so a new `.jpg` and `.html` fixture were silently left out of the
+  wheel while the sdist was fine — the failure only shows up from an installed
+  wheel. Matched by wildcard now.
+- The live view stream busy-looped when the frame interval was zero, flooding the
+  socket and starving the event loop, and `stop()` waited its full timeout on any
+  open stream. Fixed with a floored interval, a disconnect check, and a forced
+  exit after a short grace period. The suite went from 376 s to 21 s.
+
+### Added
+- **Modelled response latency** (`pyks2.testing.Timing`), from measured medians:
+  ~103 ms for `/v1/props`, ~1.5 s for a 358-file `/v1/photos` (it scales at
+  ~110 ms + 3.9 ms per file returned, which is why `?limit` exists), ~1.9 s from
+  shutter to `storage` event, ~830 ms for the first live view frame while the
+  mirror flips up, ~7.6 fps thereafter. Realistic is the **default**, because a
+  mock that answers instantly hides the timeout and ordering bugs a fake camera
+  exists to catch; pass `timing=FAST` for none. The `ks2_simulator` fixture is
+  fast, and a new `ks2_simulator_realistic` is there when the timing itself is
+  under test.
+- Generated responses are encoded in the firmware's own JSON house style
+  (`camera_json()`), verified by round-tripping captured bodies byte-for-byte, so
+  computed responses look like replayed ones on the wire.
+- Re-captured fixtures: `/v1/photos` is now a **full card**, 358 files across 6
+  directories, so cross-directory flattening and ordering are genuinely
+  exercised; and `?size=view` serves the **real 53 KB camera preview** rather
+  than a live view frame standing in for one. `?size=full` is now the only
+  fabricated payload, an 18 MB DNG being impractical to commit.
+
+### Also pinned down
+- `PUT /v1/params/camera` echoes a `variables`-shaped body (the capability lists,
+  `state` and `exposureModeOption`), not just the params a `GET` returns.
+- `?limit=N` keeps every directory in the response, giving those past the limit
+  an empty `files` list, and `limit=0` means *no limit*.
+- A missing photo is `errCode 404` and an unknown path `errCode 400`, both under
+  HTTP 200; an unhandled **method** is the one break from Law 1, a real HTTP 400
+  with an HTML body.
+- `/v1/changes` payloads end with a newline — the storage frame is 53 bytes.
+- Listing order is ascending shot number, which is not the same as sorted
+  filenames: a RAW+JPEG pair shares a number and the `.JPG` comes first.
+- Every response carries `Server: server`, `Cache-Control`, `Pragma`, `Expires`,
+  `Max-Age` and `Accept-Ranges`, and no `Date`.
+
+### Note on `capture()`
+Worth knowing rather than changing: with no latest photo yet, `capture()` passes
+`since=None`, which makes `wait_for_capture()` re-read the baseline *after* the
+shutter has fired. That is safe against the real camera only because the file
+takes ~2 s to appear. An early simulator build created the file instantly and
+`capture()` hung, adopting the new file as its own baseline. The simulator now
+defers the file exactly as the camera does, with a floor that survives
+`timing=FAST`.
+
+## [1.2.0b1] — 2026-07-29
+
+A prerelease so the new simulator can soak before its API is frozen. Beta
+because that public surface may still change, **not** because anything is
+unverified — the simulator replays hardware-captured wire data throughout.
+
+### Added
+- **A shipped camera simulator (`pyks2[testing]`)**: `pyks2.testing` serves a
+  protocol-level fake K-S2 over a real socket, so the *actual* pyks2 client —
+  sync and async — can be driven end to end with no camera on the bench. This
+  is deliberately **public, supported surface**, not internal test scaffolding:
+  downstream libraries import it to run their own integration tests against a
+  faithful camera instead of mocking pyks2 out.
+
+  ```python
+  from pyks2.testing import SimulatorServer
+
+  with SimulatorServer() as server:
+      cam = server.client()          # a real K_S2_WiFi
+      info = cam.capture(af="off")
+  ```
+
+  Also available as `python -m pyks2.testing.simulator --port 8080`, and as a
+  `ks2_simulator` pytest fixture on an ephemeral port, registered through a
+  `pytest11` entry point so downstream suites get it just by installing the
+  extra. Covers `/v1/props`, `/v1/params/camera` (GET + PUT), `/v1/photos` and
+  photo download, `POST /v1/camera/shoot`, the `/v1/changes` WebSocket and the
+  `/v1/liveview` MJPEG stream, plus the ping/apis/constants/variables/status
+  reads.
+
+  Every response body is **replayed from bytes captured off a physical K-S2**
+  (firmware 01.10) and shipped inside the package as `pyks2/testing/data/`, so
+  it works from a plain `pip install` rather than only in a git checkout. It
+  reproduces the verified protocol behaviours rather than an idealised API:
+  `errCode` in the body with HTTP 200 (Law 1), `/v1/photos` oldest-first with
+  `?limit` as a head-limit only, the empty-list writability signal (a write to
+  a camera-controlled value returns 200 and is silently ignored), exactly one
+  `storage` event per capture and a `camera` event per settings write, and the
+  412/200 gating on `/v1/liveview/zoom`. State is intentionally shallow: only a
+  capture mutates anything, making a new file appear and firing the matching
+  event so a shoot → new-file → download sequence works. The two payloads that
+  are not captured bytes (`?size=view`, `?size=full`) are documented in
+  `pyks2/testing/data/PROVENANCE.md`.
+- **Tests driving the real client against the simulator** over loopback, for
+  both transports — `events_async()` and `iter_liveview_frames_async()`
+  included — covering the requests/httpx/websockets transports and the MJPEG
+  and event parsers that the existing fake-transport tests cannot reach.
+
+### Fixed
+- **`K_S2_WiFi` now accepts an address with a port** (`"127.0.0.1:8080"`).
+  `ip` was interpreted inconsistently: HTTP interpolated it straight into the
+  URL, so it could carry a port, but the `/v1/changes` clients needed host and
+  port separately — the async one built `ws://host:8080:80/v1/changes` and the
+  sync one passed the whole string to a socket connect. There was therefore no
+  working way to point the event stream anywhere but port 80. `.host` and
+  `.port` are now parsed once and used for the WebSocket. Invisible against the
+  camera, which is always `192.168.0.1:80`; found immediately by pointing the
+  client at the simulator.
+
+### Packaging
+- New `testing` extra (`starlette`, `uvicorn`, `pytest`, plus `pyks2[async]`).
+  `dev` now includes it. `import pyks2` still works with no extras installed;
+  only building or running the simulator raises, and the error names the extra.
+- `pyks2.testing` added to the distribution, with its `data/` declared as
+  package-data so the fixtures land in the **wheel** as well as the sdist.
+- CI installs `[dev,async,testing]`.
+
 ## [1.1.0] — 2026-07-29
 
 Three additive features on top of 1.0.0, all now hardware-verified. All are

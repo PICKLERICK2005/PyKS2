@@ -14,8 +14,9 @@ which is the reliable pattern for this camera's server.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Iterator
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional, Union
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 import requests
@@ -24,8 +25,8 @@ from . import constants as C
 from ._mjpeg import MjpegFrameParser
 from .errors import (
     KS2APIError,
-    KS2Error,
     KS2ConnectionError,
+    KS2Error,
     KS2NotFoundError,
     KS2UnsupportedError,
 )
@@ -43,11 +44,39 @@ if TYPE_CHECKING:
     from .async_client import AsyncChangesClient
 
 
+def _split_host_port(ip: str, default_port: int = C.DEFAULT_PORT):
+    """Split an address that may carry a port into ``(host, port)``.
+
+    HTTP URLs can interpolate ``host:port`` as one string, but the /v1/changes
+    WebSocket needs the two separately (a raw socket connect for the sync
+    client, an explicit port in the ws:// URI for the async one). Without this,
+    an address with a port produces ``ws://host:1234:80/...``.
+    """
+    if ip.startswith("["):                      # bracketed IPv6, e.g. [::1]:8080
+        host, _, rest = ip.partition("]")
+        rest = rest.lstrip(":")
+        try:
+            return host[1:], int(rest) if rest else default_port
+        except ValueError:
+            return host[1:], default_port
+    if ip.count(":") == 1:                      # host:port
+        host, _, port = ip.partition(":")
+        try:
+            return host, int(port)
+        except ValueError:
+            return ip, default_port
+    return ip, default_port
+
+
 class K_S2_WiFi:
     """Client for the Pentax K-S2 built-in WiFi HTTP API.
 
     Args:
-        ip: Camera IP (default 192.168.0.1).
+        ip: Camera address (default 192.168.0.1). May include a port —
+            ``"127.0.0.1:8080"`` — which is what you want when pointing the
+            client at something other than the camera itself, e.g. the
+            simulator in ``pyks2.testing``. The real camera always serves on
+            port 80, so plain ``"192.168.0.1"`` is the normal form.
         timeout: Default request timeout in seconds.
         logger: Optional callable(str) for trace logging.
 
@@ -60,8 +89,12 @@ class K_S2_WiFi:
     """
 
     def __init__(self, ip: str = C.DEFAULT_IP, timeout: float = C.DEFAULT_TIMEOUT,
-                 logger: Optional[Callable[[str], None]] = None):
+                 logger: Callable[[str], None] | None = None):
+        #: as given, including any ":port" — HTTP URLs interpolate this directly
         self.ip = ip
+        #: ``ip`` split into its parts, for the WebSocket stream, which needs
+        #: host and port separately rather than as one authority string
+        self.host, self.port = _split_host_port(ip)
         self.timeout = timeout
         self._log = logger or (lambda _m: None)
 
@@ -70,8 +103,8 @@ class K_S2_WiFi:
     def _url(self, path: str) -> str:
         return f"http://{self.ip}{path}"
 
-    def _request(self, method: str, path: str, *, body: Optional[str] = None,
-                 timeout: Optional[float] = None, stream: bool = False,
+    def _request(self, method: str, path: str, *, body: str | None = None,
+                 timeout: float | None = None, stream: bool = False,
                  raw: bool = False) -> Any:
         """Make one request over a fresh connection.
 
@@ -104,10 +137,11 @@ class K_S2_WiFi:
         text = resp.text
         try:
             data = json.loads(text)
-        except (ValueError, json.JSONDecodeError):
+        except (ValueError, json.JSONDecodeError) as e:
             # Non-JSON body (e.g. unhandled method returns raw HTML) — treat as
             # an unsupported/failed operation.
-            raise KS2APIError(resp.status_code, "non-JSON response body", path)
+            raise KS2APIError(
+                resp.status_code, "non-JSON response body", path) from e
 
         err = data.get("errCode", 200)
         if err != 200:
@@ -129,38 +163,39 @@ class K_S2_WiFi:
         except Exception:
             return False
 
-    def apis(self) -> List[str]:
+    def apis(self) -> list[str]:
         """Return the camera's self-described endpoint list (/v1/apis)."""
         return self._request("GET", C.EP.APIS).get("apis", [])
 
     # -- reads: decomposed groups ------------------------------------------
 
-    def _get_group(self, group: str, sub: Optional[str]) -> Dict[str, Any]:
+    def _get_group(self, group: str, sub: str | None) -> dict[str, Any]:
         if sub is None:
             path = {"props": C.EP.PROPS}.get(group)
-            if path is None:  # constants/params/variables/status have no bare form we use
+            if path is None:
+                # constants/params/variables/status have no bare form we use
                 path = f"/v1/{group}"
         else:
             path = f"/v1/{group}/{sub}"
         return self._request("GET", path)
 
-    def props(self, sub: Optional[str] = None) -> Dict[str, Any]:
+    def props(self, sub: str | None = None) -> dict[str, Any]:
         """GET /v1/props (or /v1/props/{sub}). Legacy flat superset."""
         return self._get_group("props", sub)
 
-    def constants(self, sub: str = "camera") -> Dict[str, Any]:
+    def constants(self, sub: str = "camera") -> dict[str, Any]:
         """GET /v1/constants/{sub}. Static capability lists."""
         return self._get_group("constants", sub)
 
-    def params(self, sub: str = "camera") -> Dict[str, Any]:
+    def params(self, sub: str = "camera") -> dict[str, Any]:
         """GET /v1/params/{sub}. Current values."""
         return self._get_group("params", sub)
 
-    def variables(self, sub: str = "camera") -> Dict[str, Any]:
+    def variables(self, sub: str = "camera") -> dict[str, Any]:
         """GET /v1/variables/{sub}. Params + lists + live values."""
         return self._get_group("variables", sub)
 
-    def status(self, sub: str = "camera") -> Dict[str, Any]:
+    def status(self, sub: str = "camera") -> dict[str, Any]:
         """GET /v1/status/{sub}. Transient runtime state."""
         return self._get_group("status", sub)
 
@@ -181,7 +216,7 @@ class K_S2_WiFi:
         get a complete picture, but you should re-fetch after settings changes
         rather than caching (see PROTOCOL.md §4).
         """
-        merged: Dict[str, Any] = {}
+        merged: dict[str, Any] = {}
         merged.update(self.constants("camera"))
         try:
             merged.update(self.variables("camera"))
@@ -195,7 +230,7 @@ class K_S2_WiFi:
         The three fields the model exposes live in two endpoints: focusMode is
         in params/lens, while focused and focusCenters are in status/lens.
         """
-        merged: Dict[str, Any] = {}
+        merged: dict[str, Any] = {}
         try:
             merged.update(self.params("lens"))
         except KS2APIError:
@@ -213,7 +248,7 @@ class K_S2_WiFi:
         (battery/storages) in status/device, and the WiFi fields (ssid/channel/
         key) in params/device. All three are merged so DeviceInfo is complete.
         """
-        merged: Dict[str, Any] = {}
+        merged: dict[str, Any] = {}
         for getter in (lambda: self.constants("device"),
                        lambda: self.status("device"),
                        lambda: self.params("device")):
@@ -223,11 +258,11 @@ class K_S2_WiFi:
                 pass
         return DeviceInfo.from_dict(merged)
 
-    def get_state(self) -> Optional[str]:
+    def get_state(self) -> str | None:
         """Return camera 'state' ('idle'/'capturing'/...) from status/camera."""
         return self.status("camera").get("state")
 
-    def get_focus_mode(self) -> Optional[str]:
+    def get_focus_mode(self) -> str | None:
         """Return 'af' or 'mf' (the physical lever position). Read-only."""
         return self.get_lens_state().focus_mode
 
@@ -264,8 +299,8 @@ class K_S2_WiFi:
     # writability signal FIRST and raise KS2UnsupportedError instead of
     # sending a write that would silently no-op.
 
-    def set_iso(self, value: Union[int, str], *,
-                constants: Optional[CameraConstants] = None) -> CameraParams:
+    def set_iso(self, value: int | str, *,
+                constants: CameraConstants | None = None) -> CameraParams:
         """Typed ISO (sv) write. ``value`` is an int (e.g. 400) or the string
         "auto" (ISO AUTO is a real camera value; PROTOCOL.md §6.5).
 
@@ -283,8 +318,8 @@ class K_S2_WiFi:
               else str(int(value)))
         return self.set_camera_params(sv=sv)
 
-    def set_aperture(self, value: Union[float, str], *,
-                      constants: Optional[CameraConstants] = None) -> CameraParams:
+    def set_aperture(self, value: float | str, *,
+                      constants: CameraConstants | None = None) -> CameraParams:
         """Typed aperture (av) write. ``value`` is a number (or numeric
         string) matched against the live ``avList`` so the camera's exact
         string encoding is used (it mixes forms like "8.0" and "10" for
@@ -304,8 +339,8 @@ class K_S2_WiFi:
         av = _match_numeric_option(value, c.av_list)
         return self.set_camera_params(av=av)
 
-    def set_shutter_speed(self, value: Union[Fraction, float, int], *,
-                           constants: Optional[CameraConstants] = None) -> CameraParams:
+    def set_shutter_speed(self, value: Fraction | float | int, *,
+                           constants: CameraConstants | None = None) -> CameraParams:
         """Typed shutter-speed (tv) write. ``value`` is a ``fractions.Fraction``
         of seconds (e.g. ``Fraction(1, 100)`` for 1/100s, ``Fraction(30, 1)``
         for 30s), or a plain int/float number of seconds converted via
@@ -323,12 +358,13 @@ class K_S2_WiFi:
                 400, "tv (shutter speed) is camera-controlled in the "
                      "current exposure mode (tvList is empty)",
                 C.EP.PARAMS_SUB.format(sub="camera"))
-        frac = value if isinstance(value, Fraction) else Fraction(value).limit_denominator(10000)
+        frac = (value if isinstance(value, Fraction)
+                else Fraction(value).limit_denominator(10000))
         tv = f"{frac.numerator}.{frac.denominator}"
         return self.set_camera_params(tv=tv)
 
     def set_exposure_comp(self, value: float, *,
-                           constants: Optional[CameraConstants] = None) -> CameraParams:
+                           constants: CameraConstants | None = None) -> CameraParams:
         """Typed exposure-compensation (xv) write. ``value`` is a signed EV
         float (e.g. -0.7, 0, +1.3), formatted to the camera's "+0.7"/"-0.3"/
         "0.0" style (PROTOCOL.md §6.5).
@@ -371,7 +407,7 @@ class K_S2_WiFi:
 
     # -- capture ------------------------------------------------------------
 
-    def shoot(self, af: Optional[str] = None) -> ShootResult:
+    def shoot(self, af: str | None = None) -> ShootResult:
         """Fire the shutter (stills). Returns the immediate response.
 
         ``captured`` in the result is always False (capture is async) — call
@@ -435,7 +471,7 @@ class K_S2_WiFi:
 
     # -- photos: browse -----------------------------------------------------
 
-    def list_photos(self, limit: Optional[int] = None) -> PhotoListing:
+    def list_photos(self, limit: int | None = None) -> PhotoListing:
         """GET /v1/photos. Enumerate photos as {dirs:[{name,files}]}.
 
         This is reliable (the old "it hangs" claim is debunked — see
@@ -461,18 +497,29 @@ class K_S2_WiFi:
         return PhotoInfo.from_dict(self._request("GET", ep))
 
     def latest_info(self) -> PhotoInfo:
-        """GET /v1/photos/latest/info. Metadata for the most recent shot."""
+        """GET /v1/photos/latest/info. Metadata for the most recent shot.
+
+        "Most recent" means most recent *this power session*, not newest on the
+        card: until the camera captures something since power-on it answers
+        ``captured: false`` with no ``dir``/``file``, however full the card is.
+        Expect ``.path`` to be None in that case (measured 2026-07-29).
+        """
         return PhotoInfo.from_dict(self._request("GET", C.EP.PHOTO_LATEST_INFO))
 
-    def wait_for_capture(self, since: Optional[str] = None,
+    def wait_for_capture(self, since: str | None = None,
                          timeout: float = 30.0,
                          poll_interval: float = 0.5) -> PhotoInfo:
         """Poll latest/info until a NEW captured file appears.
 
-        ``/v1/photos/latest/info`` always reports ``captured: true`` for the
-        last existing image, so a naive "captured is true" check returns the
-        *previous* photo instantly. This method compares against a baseline
-        path and only returns once the latest path actually changes.
+        Once anything has been captured this power session, ``latest/info``
+        reports ``captured: true`` for that image, so a naive "captured is true"
+        check returns the *previous* photo instantly. This method compares
+        against a baseline path and only returns once the latest path changes.
+
+        Note on ``since=None``: the baseline is then read here, *after* the shot
+        was triggered. That is safe only because the camera takes ~2 s to write
+        the file, so the read still sees the old value. Prefer passing the
+        baseline you captured yourself before firing.
 
         Args:
             since: The path (``DIR/FILE``) that was latest BEFORE you triggered
@@ -495,7 +542,7 @@ class K_S2_WiFi:
             except KS2Error:
                 since = None
         start = time.time()
-        last: Optional[PhotoInfo] = None
+        last: PhotoInfo | None = None
         while time.time() - start < timeout:
             info = self.latest_info()
             last = info
@@ -506,7 +553,7 @@ class K_S2_WiFi:
             f"no new captured file within {timeout}s "
             f"(baseline={since}, last={last.path if last else 'none'})")
 
-    def capture_with_events(self, af: Optional[str] = None,
+    def capture_with_events(self, af: str | None = None,
                             timeout: float = 30.0) -> PhotoInfo:
         """Take one photo using the event stream for completion detection.
 
@@ -534,9 +581,9 @@ class K_S2_WiFi:
         raise KS2ConnectionError(
             f"no storage event within {timeout}s of capture")
 
-    def capture(self, af: Optional[str] = None, timeout: float = 30.0,
-                download_to: Optional[str] = None,
-                size: Optional[str] = None) -> PhotoInfo:
+    def capture(self, af: str | None = None, timeout: float = 30.0,
+                download_to: str | None = None,
+                size: str | None = None) -> PhotoInfo:
         """Take one photo safely: baseline, shoot, wait for the NEW file,
         optionally download it. This is the recommended one-shot capture.
 
@@ -564,7 +611,7 @@ class K_S2_WiFi:
 
     # -- photos: download ---------------------------------------------------
 
-    def download(self, path: str, out_path: str, size: Optional[str] = None,
+    def download(self, path: str, out_path: str, size: str | None = None,
                  chunk: int = 8192, min_bytes: int = 1000) -> int:
         """Download a photo atomically. Returns bytes written.
 
@@ -620,10 +667,11 @@ class K_S2_WiFi:
             resp.close()
             try:
                 err = json.loads(head.decode("utf-8", "replace"))
-                raise KS2APIError(err.get("errCode", 400),
-                                  err.get("errMsg", ""), ep)
-            except (ValueError, json.JSONDecodeError):
-                raise KS2APIError(400, "download returned a non-image body", ep)
+            except (ValueError, json.JSONDecodeError) as e:
+                raise KS2APIError(
+                    400, "download returned a non-image body", ep) from e
+            raise KS2APIError(err.get("errCode", 400),
+                              err.get("errMsg", ""), ep)
 
         # Stream the rest to a .part file, then atomically rename.
         part = out_path + ".part"
@@ -661,8 +709,14 @@ class K_S2_WiFi:
         return n
 
     def preview_bytes(self, path: str) -> bytes:
-        """Return the ~54KB JPEG preview (size=view) as bytes, in memory."""
+        """Return the ~54KB JPEG preview (size=view) as bytes, in memory.
+
+        Args:
+            path: 'DIR/FILE'.
+        """
         d, _, f = path.partition("/")
+        if not (d and f):
+            raise ValueError(f"path must be 'DIR/FILE', got {path!r}")
         ep = C.EP.PHOTO_FILE.format(dir=quote(d), file=quote(f)) + "?size=view"
         resp = self._request("GET", ep, timeout=30.0, stream=True, raw=True)
         data = resp.content
@@ -686,7 +740,7 @@ class K_S2_WiFi:
         body = "&".join(f"{k}={v}" for k, v in params.items()) if params else None
         return self._request("POST", C.EP.LIVEVIEW_ZOOM, body=body)
 
-    def liveview_stream(self) -> "requests.Response":
+    def liveview_stream(self) -> requests.Response:
         """Return a streaming Response for the MJPEG live view.
 
         Content-Type: multipart/x-mixed-replace; boundary=--boundarydonotcross.
@@ -695,7 +749,7 @@ class K_S2_WiFi:
         return self._request("GET", C.EP.LIVEVIEW, timeout=C.DOWNLOAD_TIMEOUT,
                              stream=True, raw=True)
 
-    def iter_liveview_frames(self, max_frames: Optional[int] = None
+    def iter_liveview_frames(self, max_frames: int | None = None
                              ) -> Iterator[bytes]:
         """Yield individual JPEG frames from the live view stream.
 
@@ -722,7 +776,7 @@ class K_S2_WiFi:
         finally:
             resp.close()
 
-    def liveview(self, max_frames: Optional[int] = None) -> "LiveviewSession":
+    def liveview(self, max_frames: int | None = None) -> LiveviewSession:
         """Context-managed live view: guarantees the mirror drops on exit.
 
         Usage:
@@ -747,9 +801,10 @@ class K_S2_WiFi:
             ...     if ev.is_storage: ...   # a shot completed
         """
         from .events import ChangesClient
-        return ChangesClient(self.ip, **kwargs)
+        kwargs.setdefault("port", self.port)
+        return ChangesClient(self.host, **kwargs)
 
-    def events_async(self, **kwargs) -> "AsyncChangesClient":
+    def events_async(self, **kwargs) -> AsyncChangesClient:
         """Return an AsyncChangesClient for the /v1/changes WebSocket (async).
 
         Requires the optional ``websockets`` dependency:
@@ -763,9 +818,10 @@ class K_S2_WiFi:
             ...         if change.is_storage: ...
         """
         from .async_client import AsyncChangesClient
-        return AsyncChangesClient(self.ip, **kwargs)
+        kwargs.setdefault("port", self.port)
+        return AsyncChangesClient(self.host, **kwargs)
 
-    def iter_liveview_frames_async(self, max_frames: Optional[int] = None):
+    def iter_liveview_frames_async(self, max_frames: int | None = None):
         """Async counterpart to ``iter_liveview_frames()``. Requires the
         optional ``httpx`` dependency: ``pip install pyks2[async]``.
 
@@ -791,12 +847,12 @@ class LiveviewSession:
     frame loop runs to completion, breaks early, or raises.
     """
 
-    def __init__(self, client: "K_S2_WiFi", max_frames: Optional[int] = None):
+    def __init__(self, client: K_S2_WiFi, max_frames: int | None = None):
         self._client = client
         self._max_frames = max_frames
-        self._resp: Optional["requests.Response"] = None
+        self._resp: requests.Response | None = None
 
-    def __enter__(self) -> "LiveviewSession":
+    def __enter__(self) -> LiveviewSession:
         self._resp = self._client.liveview_stream()
         return self
 
@@ -820,7 +876,7 @@ class LiveviewSession:
                     return
 
 
-def _match_numeric_option(value: Union[float, str], options: List[str]) -> str:
+def _match_numeric_option(value: float | str, options: list[str]) -> str:
     """Find the camera's exact string encoding for a numeric value within a
     live capability list (e.g. avList mixes "8.0" and "10" for whole stops).
     Falls back to a plain one-decimal format if no match is found — an

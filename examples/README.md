@@ -24,6 +24,8 @@ response below. It is both human-readable and machine-readable (it drives the
 | `status-*.json` | `GET /v1/status/{facet}` | Transient runtime state |
 | `props-*.json` | `GET /v1/props/{facet}` | Per-facet legacy slice (camera/lens/liveview/device) |
 | `photos-listing.json` | `GET /v1/photos` | Card enumeration structure |
+| `photos-listing-full.json` | `GET /v1/photos` | A **full** card: 358 files across 6 dirs, incl. a RAW+JPEG pair sharing shot number 2224 (the `.JPG` is listed first) |
+| `error-404-not-found.json` | missing photo path | `errCode` 404 body shape |
 | `photos-latest-info.json` | `GET /v1/photos/latest/info` | Latest shot metadata |
 | `camera-shoot-response.json` | `POST /v1/camera/shoot` | Capture response |
 | `changes-events.jsonl` | `WS /v1/changes` | Event stream samples (both `changed` kinds) |

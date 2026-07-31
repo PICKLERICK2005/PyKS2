@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/pyks2)](https://pypi.org/project/pyks2/)
 [![tests](https://github.com/PICKLERICK2005/pyks2/actions/workflows/test.yml/badge.svg)](https://github.com/PICKLERICK2005/pyks2/actions/workflows/test.yml)
-[![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
+[![python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-MIT-green)](https://github.com/PICKLERICK2005/pyks2/blob/main/LICENSE)
 
 A Python library and CLI for controlling the **Pentax K-S2** over its
@@ -23,9 +23,9 @@ and more capable than the vendor's own Image Sync app.
 This maps what I could exercise on my own body. Two areas are not fully
 verified:
 
-- **GPS** — the optional top-mounted Pentax GPS unit surfaces in
+- **GPS**: the optional top-mounted Pentax GPS unit surfaces in
   `exposureModeList` but I couldn't test it (I don't own the unit). Untested.
-- **Live-view digital zoom** — `POST /v1/liveview/zoom` exists but was gated on
+- **Live-view digital zoom**: `POST /v1/liveview/zoom` exists but was gated on
   my setup: every parameter shape I tried returned `errCode 200`. It may need a
   lens or camera state I couldn't reach over the API. No working digital-zoom
   control was observed.
@@ -63,6 +63,7 @@ pyks2/          the library (camera-only HTTP client, typed models, WS events)
   ├─ errors.py       typed exceptions (errCode-aware)
   ├─ _mjpeg.py       shared MJPEG frame parser (sync + async liveview)
   ├─ async_client.py optional async streaming (pyks2[async])
+  ├─ testing/        shipped camera simulator (pyks2[testing])
   └─ cli.py          the command-line interface
 docs/           the reverse-engineering write-up (GitHub Pages source)
   ├─ PROTOCOL.md     the API dissection
@@ -129,7 +130,7 @@ with cam.liveview() as stream:       # closes the stream (drops the mirror)
 ## Async streaming
 
 `pip install pyks2[async]` pulls in `httpx`/`websockets` for async equivalents
-of the event stream and live view. Hardware-verified against a physical K-S2 —
+of the event stream and live view. Hardware-verified against a physical K-S2,
 see [VERIFICATION.md](docs/VERIFICATION.md).
 
 ```python
@@ -144,9 +145,111 @@ async for jpeg in cam.iter_liveview_frames_async(max_frames=10):
     ...                               # 720x480 JPEGs; mirror drops on close
 ```
 
-Both share their parsing with the sync path — MJPEG framing via
-`pyks2._mjpeg`, event decoding via `events._payload_to_event` — so there is no
+Both share their parsing with the sync path. MJPEG framing via
+`pyks2._mjpeg`, event decoding via `events._payload_to_event`, so there is no
 duplicated protocol logic between sync and async.
+
+---
+
+## Camera simulator (for tests)
+
+`pip install pyks2[testing]` ships a protocol-level fake K-S2 that serves over a
+real socket, so you can drive the **real** client with no camera on the bench.
+Every response is replayed from bytes captured off the physical camera, and it
+reproduces the awkward parts of the protocol on purpose: `errCode` in the body,
+`?limit` as a head-limit only, the empty-list writability signal, one `storage`
+event per capture, no "latest" photo until something is actually shot. Its card
+is a real listing too: 358 files across six directories, including a RAW+JPEG
+pair, so cross-directory ordering behaves like the real thing.
+
+It is measured against the real body rather than written from the notes: the same
+probe runs against both and the results are diffed, 40 of 40 checks matching,
+including response times. On top of that, every response the simulator *computes*
+is diffed against the captured bytes for the same scenario — a standing test,
+because two divergences turned up outside what the probe compared (see
+[VERIFICATION.md](docs/VERIFICATION.md), which records the scope of each).
+Latency is modelled by default, a
+capture reports ~2 s later, the first live view frame waits ~830 ms for the
+mirror, because a mock that answers instantly hides the timeout and ordering
+bugs a fake camera exists to catch. Pass `timing=FAST` when you just want speed.
+
+```python
+from pyks2.testing import SimulatorServer
+
+with SimulatorServer() as server:
+    cam = server.client()             # a real K_S2_WiFi, pointed at the fake
+    info = cam.capture(af="off")      # shoot -> new file appears -> download
+    cam.download(info.path, "shot.jpg", size="view")
+```
+
+Or run it standalone and point anything at it:
+
+```bash
+python -m pyks2.testing.simulator --port 8080
+```
+
+In a test suite, the `ks2_simulator` fixture is registered automatically by
+installing the extra, no `conftest.py` wiring:
+
+```python
+def test_capture(ks2_simulator):      # latency off; ephemeral port
+    cam = ks2_simulator.client()      # fresh camera state per test
+    assert cam.capture(af="off").path
+```
+
+(`ks2_simulator_realistic` is the same thing with the camera's measured delays,
+for when the timing is what you're testing.)
+
+### Shaping the camera, and making it fail
+
+Every knob is public API, nothing needs private attributes:
+
+The `ks2_simulator` fixture hands you the control object as `.simulator`, so a
+test can point the client at the fake *and* make it misbehave:
+
+```python
+from pyks2.testing import paths
+
+sim = ks2_simulator.simulator
+
+# state
+sim.set_exposure_mode("B")        # the real Bulb capture: tv/xv camera-owned
+sim.set_focus_mode("mf")          # in MF, af=auto is refused with a 412;
+                                  # the lens reads switch to the MF capture
+sim.set_camera_controlled("sv")   # ISO camera-owned: writes 200 but no-op
+sim.seed_photos({"100_0101": ["IMGP0001.DNG"]})
+
+# failures, from real captured error bodies
+sim.fail(paths.SHOOT)                            # next shot returns 412
+sim.fail(paths.PHOTOS, "bad_request", times=3)
+sim.fail(paths.PROPS, "not_found", times=None)   # until cleared
+
+# transport misbehaviour (behavioural, no fixture)
+sim.drop(paths.PROPS)             # connection dies -> KS2ConnectionError
+sim.delay(paths.PHOTOS, 5.0)      # slow enough to trip a client timeout
+sim.drop_stream_after(3)          # live view dies mid-stream
+sim.clear_faults()
+```
+
+Use the `paths.*` constants rather than URL strings, so your tests aren't
+coupled to pyks2's spellings. `paths.all()` lists every fault-able endpoint,
+and the simulator refuses to start if a route ever appears without one. Raw
+paths still work. `paths.PHOTO_FILE` and `paths.PHOTO_INFO` are templated and
+match any photo; pass a concrete `"/v1/photos/DIR/FILE"` to target one.
+
+`fail()` only accepts errors that were actually captured: `"precondition"`
+(412), `"bad_request"` (400), `"not_found"` (404), `"unhandled_method"` (a real
+HTTP 400 with an HTML body). There is deliberately no card-full: that response
+was never captured, and the simulator does not invent wire data — it points you
+at the near-full `remain: 1` capture in the repo's `examples/` instead. Likewise
+`set_exposure_mode()`
+accepts only the dial positions with a real capability capture behind them, and
+points you at `set_camera_controlled()` when you ask for another.
+
+This is supported public surface, not internal scaffolding: libraries built on
+pyks2 use it to run their integration tests against a faithful camera rather
+than mocking pyks2 out. Only a capture mutates state, it is a protocol
+simulator, not a camera emulator.
 
 ---
 
@@ -199,7 +302,7 @@ The heart of this project is the write-up. Highlights:
   SD-card door kills the connection; and the camera's WiFi access point uses
   client isolation (which shaped how the official app's traffic had to be
   captured).
-- **How Image Sync actually works**, captured off the wire — and why this
+- **How Image Sync actually works**, captured off the wire, and why this
   client's event-driven design is better.
 
 Start with **[docs/PROTOCOL.md](https://picklerick2005.github.io/PyKS2/PROTOCOL.html)**, then
@@ -220,7 +323,7 @@ pytest -q                    # 70 tests, no camera required
 
 The test suite runs entirely against captured fixtures (`examples/*.json`) via a
 mock camera in `tests/conftest.py`, so it needs no hardware. Tests also serve as
-executable documentation of the API's behaviour — including the trickier
+executable documentation of the API's behaviour, including the trickier
 findings (async capture, the Bulb correction, dynamic capability lists).
 
 ## Compatibility
