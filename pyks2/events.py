@@ -17,7 +17,7 @@ import json
 import os
 import socket
 import struct
-from typing import Iterator, Optional
+from collections.abc import Iterator
 
 from .errors import KS2ConnectionError
 from .models import ChangeEvent
@@ -25,7 +25,7 @@ from .models import ChangeEvent
 _WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 
-def _payload_to_event(payload: str) -> Optional[ChangeEvent]:
+def _payload_to_event(payload: str) -> ChangeEvent | None:
     """Parse one WebSocket text payload into a ChangeEvent, or None if it's
     not a change event. Shared by the sync ChangesClient and the async
     AsyncChangesClient (pyks2.async_client) so the two transports don't
@@ -55,12 +55,12 @@ class ChangesClient:
         self.port = port
         self.connect_timeout = connect_timeout
         self.recv_timeout = recv_timeout
-        self._sock: Optional[socket.socket] = None
+        self._sock: socket.socket | None = None
         self._buf = b""
 
     # -- context management -------------------------------------------------
 
-    def __enter__(self) -> "ChangesClient":
+    def __enter__(self) -> ChangesClient:
         self.connect()
         return self
 
@@ -139,7 +139,7 @@ class ChangesClient:
         while self._sock is not None:
             try:
                 data = self._sock.recv(4096)
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 break
@@ -185,7 +185,7 @@ class ChangesClient:
                 break
         return out
 
-    def next_event(self, timeout: Optional[float] = None) -> Optional[ChangeEvent]:
+    def next_event(self, timeout: float | None = None) -> ChangeEvent | None:
         """Block for a single event, up to ``timeout`` seconds. Returns None on
         timeout.
 
@@ -210,7 +210,7 @@ class ChangesClient:
                 self._sock.settimeout(min(self.recv_timeout, remaining))
             try:
                 data = self._sock.recv(4096)
-            except socket.timeout:
+            except TimeoutError:
                 if deadline is not None and time.time() >= deadline:
                     return None
                 continue
@@ -226,5 +226,5 @@ class ChangesClient:
         return None
 
     @staticmethod
-    def _payload_to_event(payload: str) -> Optional[ChangeEvent]:
+    def _payload_to_event(payload: str) -> ChangeEvent | None:
         return _payload_to_event(payload)

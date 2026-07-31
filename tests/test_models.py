@@ -1,10 +1,12 @@
 """Model parsing / datetime-format tolerance tests."""
 from datetime import datetime
-from pyks2.models import _parse_ks2_datetime, PhotoInfo, CameraParams
+
+from pyks2.models import CameraParams, PhotoInfo, _parse_ks2_datetime
 
 
 def test_iso_datetime():
-    assert _parse_ks2_datetime("2026-07-15T11:43:15") == datetime(2026, 7, 15, 11, 43, 15)
+    assert (_parse_ks2_datetime("2026-07-15T11:43:15")
+            == datetime(2026, 7, 15, 11, 43, 15))
 
 
 def test_colon_packed_datetime():

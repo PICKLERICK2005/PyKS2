@@ -393,9 +393,15 @@ computed client-side or pulled from `/v1/status`. In a browser, pointing an
 mirror up to start streaming, and just terminating the JPEG stream viewing flips 
 the mirror back down.
 
-`POST /v1/liveview/zoom` exists for digital zoom/pan but is **gated**: an empty
-body returns `200`, but any parameters return `412` unless live view is actively
-streaming.
+`POST /v1/liveview/zoom` exists for digital zoom/pan but is **gated**: it returns
+`412` unless live view is actively streaming, and `200` while it is —
+**regardless of the body**, including an empty one or none at all.
+
+> Corrected 2026-07-29. This section previously said an empty body returned
+> `200`. Re-measuring disproved it: with no stream running, all three of no body,
+> an empty body, and `zoom=1` returned `412`; with a stream running, all three
+> returned `200`. The gate is purely about whether live view is streaming. The
+> simulator in `pyks2.testing` reproduces the corrected behaviour.
 
 With a stream running, it was probed exhaustively, and the result is **no
 observable effect over WiFi on the test rig**. Every candidate parameter returns

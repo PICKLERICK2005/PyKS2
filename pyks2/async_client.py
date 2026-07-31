@@ -15,7 +15,8 @@ the mirror on start and dropping it on close. See docs/VERIFICATION.md.
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Optional
+from collections.abc import AsyncIterator
+from typing import Any
 
 from . import constants as C
 from ._mjpeg import MjpegFrameParser
@@ -65,7 +66,7 @@ class AsyncChangesClient:
         self.ip = ip
         self.port = port
         self.connect_timeout = connect_timeout
-        self._ws: Optional[Any] = None
+        self._ws: Any | None = None
 
     async def connect(self) -> None:
         """Perform the WebSocket handshake. Raises KS2ConnectionError on
@@ -76,7 +77,8 @@ class AsyncChangesClient:
         try:
             self._ws = await asyncio.wait_for(
                 websockets.connect(uri), timeout=self.connect_timeout)
-        except (OSError, asyncio.TimeoutError, websockets.exceptions.WebSocketException) as e:
+        except (OSError, TimeoutError,
+                websockets.exceptions.WebSocketException) as e:
             raise KS2ConnectionError(f"/v1/changes connect failed: {e}") from e
 
     async def close(self) -> None:
@@ -84,7 +86,7 @@ class AsyncChangesClient:
             await self._ws.close()
             self._ws = None
 
-    async def __aenter__(self) -> "AsyncChangesClient":
+    async def __aenter__(self) -> AsyncChangesClient:
         await self.connect()
         return self
 
@@ -104,7 +106,7 @@ class AsyncChangesClient:
                 yield ev
 
 
-async def iter_liveview_frames_async(ip: str, max_frames: Optional[int] = None,
+async def iter_liveview_frames_async(ip: str, max_frames: int | None = None,
                                       timeout: float = C.DOWNLOAD_TIMEOUT
                                       ) -> AsyncIterator[bytes]:
     """Async counterpart to ``K_S2_WiFi.iter_liveview_frames()``.

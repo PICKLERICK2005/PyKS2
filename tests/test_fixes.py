@@ -1,8 +1,9 @@
 """Regression tests for the four correctness fixes (reviewer P0 issues)."""
 import time
-import pytest
-import pyks2
 
+import pytest
+
+import pyks2
 
 # --- Issue 1: wait_for_capture must not return the pre-existing photo -------
 
@@ -118,7 +119,7 @@ def test_download_success_atomic_rename(cam, tmp_path):
 def test_next_event_times_out():
     """next_event(timeout) must return within the deadline on an idle socket,
     not loop forever."""
-    import socket as _s
+
     from pyks2.events import ChangesClient
 
     class FakeSock:
@@ -126,7 +127,7 @@ def test_next_event_times_out():
         def settimeout(self, t): self.timeout = t
         def recv(self, n):
             # simulate an idle connection: always times out
-            raise _s.timeout()
+            raise TimeoutError()
         def close(self): pass
 
     c = ChangesClient("1.2.3.4")
@@ -193,10 +194,11 @@ def test_camera_constants_exposes_movie_and_reso_lists(cam):
 def test_ws_handshake_preserves_trailing_frame_bytes(monkeypatch):
     """If a frame arrives in the same TCP read as the 101 headers, it must be
     kept in the buffer, not discarded."""
-    import socket as _s
-    from pyks2.events import ChangesClient
     import base64
     import hashlib
+    import socket as _s
+
+    from pyks2.events import ChangesClient
 
     # build a valid-looking handshake response + one text frame appended
     key_holder = {}
