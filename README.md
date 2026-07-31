@@ -163,9 +163,12 @@ is a real listing too: 358 files across six directories, including a RAW+JPEG
 pair, so cross-directory ordering behaves like the real thing.
 
 It is measured against the real body rather than written from the notes: the same
-probe runs against both and the results are diffed, currently 40 of 40 checks
-matching, including response times (see
-[VERIFICATION.md](docs/VERIFICATION.md)). Latency is modelled by default, a
+probe runs against both and the results are diffed, 40 of 40 checks matching,
+including response times. On top of that, every response the simulator *computes*
+is diffed against the captured bytes for the same scenario — a standing test,
+because two divergences turned up outside what the probe compared (see
+[VERIFICATION.md](docs/VERIFICATION.md), which records the scope of each).
+Latency is modelled by default, a
 capture reports ~2 s later, the first live view frame waits ~830 ms for the
 mirror, because a mock that answers instantly hides the timeout and ordering
 bugs a fake camera exists to catch. Pass `timing=FAST` when you just want speed.
