@@ -25,10 +25,11 @@ verified:
 
 - **GPS**: the optional top-mounted Pentax GPS unit surfaces in
   `exposureModeList` but I couldn't test it (I don't own the unit). Untested.
-- **Live-view digital zoom**: `POST /v1/liveview/zoom` exists but was gated on
-  my setup: every parameter shape I tried returned `errCode 200`. It may need a
-  lens or camera state I couldn't reach over the API. No working digital-zoom
-  control was observed.
+- **Live-view digital zoom**: the endpoint and its gate are verified —
+  `POST /v1/liveview/zoom` returns `412` with no live view running and `200`
+  while a stream is active, regardless of the body. What I couldn't find is a
+  payload that produces an observable change in the frame: every shape I tried
+  was accepted and nothing moved. So the gate is known; the effect isn't.
 
 Everything else is behaviourally verified against the hardware below.
 
@@ -292,8 +293,9 @@ The heart of this project is the write-up. Highlights:
 - **The API surface I mapped spans 38 endpoint templates**, organised as five
   read *groups* (`constants`/`params`/`variables`/`status`/`props`) × four
   *subsystems* (`camera`/`lens`/`liveview`/`device`), plus capture/focus/photo/
-  liveview actions and a WebSocket. The main gaps I could not verify were GPS
-  and LiveView Zoom.
+  liveview actions and a WebSocket. The one gap I could not verify at all is
+  GPS; for LiveView Zoom I pinned down the endpoint and its gate but never found
+  a payload with a visible effect.
 - **Two protocol laws** every client must respect: the real status is in the
   body's `errCode` (not the HTTP status), and datetime/numeric formats are
   inconsistent across endpoints.
@@ -318,13 +320,16 @@ Start with **[docs/PROTOCOL.md](https://picklerick2005.github.io/PyKS2/PROTOCOL.
 git clone https://github.com/PICKLERICK2005/pyks2.git
 cd pyks2
 pip install -e ".[dev]"     # installs pytest, mypy, ruff (+ the async extra)
-pytest -q                    # 70 tests, no camera required
+pytest -q                    # 158 tests, no camera required
 ```
 
-The test suite runs entirely against captured fixtures (`examples/*.json`) via a
-mock camera in `tests/conftest.py`, so it needs no hardware. Tests also serve as
-executable documentation of the API's behaviour, including the trickier
-findings (async capture, the Bulb correction, dynamic capability lists).
+No hardware needed, in two layers: client tests driven from captured fixtures,
+and end-to-end tests that stand up the shipped socket simulator
+(`pyks2.testing`) and point the real client at it — sync and async transports,
+the CLI, fault injection, and byte-level checks that every response the simulator
+computes matches the capture it came from. Tests also serve as executable
+documentation of the API's behaviour, including the trickier findings (async
+capture, the Bulb correction, dynamic capability lists).
 
 ## Compatibility
 
@@ -338,9 +343,12 @@ body and sending the diffs is the most useful contribution you could make!
 The only remaining gaps in this project would be:
 
 > 1. The endpoint affiliated with the GPS module
-> 2. The Liveview Zoom endpoint
+> 2. A Liveview Zoom payload that actually zooms
 
-Both of which likely require a corresponding hardware addon.
+The GPS one needs the physical top-mounted module, which I don't own. Liveview
+Zoom needs no accessory: its gate is verified — it accepts requests only while
+live view is streaming — so what's missing is a body that produces a visible
+effect, not hardware.
 
 ## License
 
