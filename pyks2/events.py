@@ -17,6 +17,7 @@ import json
 import os
 import socket
 import struct
+from collections import deque
 from collections.abc import Iterator
 
 from .errors import KS2ConnectionError
@@ -57,6 +58,7 @@ class ChangesClient:
         self.recv_timeout = recv_timeout
         self._sock: socket.socket | None = None
         self._buf = b""
+        self._pending: deque[ChangeEvent] = deque()
 
     # -- context management -------------------------------------------------
 
@@ -132,11 +134,17 @@ class ChangesClient:
             finally:
                 self._sock = None
                 self._buf = b""
+                self._pending.clear()
 
     # -- iteration ----------------------------------------------------------
 
     def _iterate(self) -> Iterator[ChangeEvent]:
-        while self._sock is not None:
+        while True:
+            self._queue_buffered_events()
+            while self._pending:
+                yield self._pending.popleft()
+            if self._sock is None:
+                break
             try:
                 data = self._sock.recv(4096)
             except TimeoutError:
@@ -146,10 +154,13 @@ class ChangesClient:
             if not data:
                 break
             self._buf += data
-            for payload in self._drain_frames():
-                ev = _payload_to_event(payload)
-                if ev is not None:
-                    yield ev
+
+    def _queue_buffered_events(self) -> None:
+        """Decode every complete buffered frame without losing excess events."""
+        for payload in self._drain_frames():
+            event = _payload_to_event(payload)
+            if event is not None:
+                self._pending.append(event)
 
     def _drain_frames(self):
         """Yield complete text-frame payloads from the buffer."""
@@ -197,11 +208,9 @@ class ChangesClient:
         if self._sock is None:
             self.connect()
         deadline = None if timeout is None else time.time() + timeout
-        # First, drain anything already buffered.
-        for payload in self._drain_frames():
-            ev = self._payload_to_event(payload)
-            if ev is not None:
-                return ev
+        self._queue_buffered_events()
+        if self._pending:
+            return self._pending.popleft()
         while self._sock is not None:
             if deadline is not None:
                 remaining = deadline - time.time()
@@ -219,10 +228,9 @@ class ChangesClient:
             if not data:
                 return None
             self._buf += data
-            for payload in self._drain_frames():
-                ev = self._payload_to_event(payload)
-                if ev is not None:
-                    return ev
+            self._queue_buffered_events()
+            if self._pending:
+                return self._pending.popleft()
         return None
 
     @staticmethod
