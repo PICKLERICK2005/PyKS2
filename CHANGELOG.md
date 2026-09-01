@@ -3,6 +3,22 @@
 All notable changes to **pyks2** are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.1] — 2026-09-01
+
+### Fixed
+- **`ChangesClient.next_event()` no longer drops coalesced change events.** If
+  several complete `/v1/changes` WebSocket frames arrive in one receive buffer,
+  every decoded event is now retained and returned exactly once in receive
+  order. The iterator remains compatible and shares the same lossless internal
+  queue and decoder. Incomplete trailing frames remain buffered as before.
+
+  Verified on a physical PENTAX K-S2 under rapid capture: five physical shots
+  produced all five expected `storage` events through `next_event()`.
+
+162 tests pass, including coalesced two- and five-event reads, queued delivery
+without another socket receive, fragmented network reads, and iterator/
+`next_event()` ordering conformance.
+
 ## [1.2.0] — 2026-07-31
 
 **The 1.2 line, stable.** One headline feature — a shipped, protocol-level camera
